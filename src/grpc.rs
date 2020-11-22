@@ -2,6 +2,10 @@ use crate::eth::MessageId;
 use anyhow::bail;
 use std::convert::TryFrom;
 
+pub mod txpool {
+    tonic::include_proto!("txpool");
+}
+
 pub mod control {
     tonic::include_proto!("control");
 }

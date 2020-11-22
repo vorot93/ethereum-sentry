@@ -74,4 +74,5 @@ pub struct Config {
     pub max_peers: usize,
     pub web3_addr: Option<Url>,
     pub control_addr: Option<Url>,
+    pub txpool_addr: Option<Url>,
 }
