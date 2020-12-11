@@ -11,9 +11,7 @@ use serde::Deserialize;
 use serde_json::json;
 use std::fmt::Debug;
 use tokio::stream::StreamExt;
-use tokio_compat_02::FutureExt;
 use tracing::*;
-use web3::types::RawTransactionDetails;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BlockId {
@@ -261,7 +259,7 @@ impl DataProvider for Web3DataProvider {
                         let block = self
                             .client
                             .eth()
-                            .block_with_raw_txs(id.into())
+                            .block_with_txs(id.into())
                             .await?
                             .ok_or_else(|| anyhow!("Block not found"))?;
 
@@ -278,7 +276,7 @@ impl DataProvider for Web3DataProvider {
                                         web3_header_to_header(
                                             self.client
                                                 .eth()
-                                                .uncle(id.into(), i.into())
+                                                .uncle_header(id.into(), i.into())
                                                 .await?
                                                 .ok_or_else(|| anyhow!("Uncle not found"))?,
                                         )
@@ -295,7 +293,7 @@ impl DataProvider for Web3DataProvider {
                         let transactions = block
                             .transactions
                             .into_iter()
-                            .map(|tx: RawTransactionDetails| {
+                            .map(|tx| {
                                 Ok(Transaction {
                                     nonce: tx.nonce,
                                     gas_price: tx.gas_price,

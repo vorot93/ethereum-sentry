@@ -17,14 +17,14 @@ clap = "3.0.0-beta.2"
 derive_more = "0.99"
 devp2p = { git = "https://github.com/rust-ethereum/devp2p", features = ["discv4", "discv5", "dnsdisc"] }
 discv4 = { git = "https://github.com/rust-ethereum/discv4" }
-discv5 = { git = "https://github.com/sigp/discv5", default-features = false }
+discv5 = { git = "https://github.com/vorot93/discv5", branch = "bytes" }
 dnsdisc = { git = "https://github.com/rust-ethereum/dnsdisc", features = ["trust-dns"] }
 educe = { version = "0.4", features = ["Debug", "Default"] }
-enr = { git = "https://github.com/rust-ethereum/enr", default-features = false, features = ["rust-secp256k1"] }
+enr = { git = "https://github.com/rust-ethereum/enr", branch = "vorot93/bytes", default-features = false, features = ["rust-secp256k1"] }
 enum-primitive-derive = "0.2"
-ethereum = { git = "https://github.com/rust-blockchain/ethereum", default-features = false }
-ethereum-forkid = "0.3"
-ethereum-types = { version = "0.9", default-features = false }
+ethereum = { git = "https://github.com/rust-blockchain/ethereum", branch = "vorot93/dev", default-features = false }
+ethereum-forkid = { git = "https://github.com/rust-ethereum/forkid" }
+ethereum-types = { git = "https://github.com/paritytech/parity-common", default-features = false }
 futures = "0.3"
 hex = "0.4"
 hex-literal = "0.3"
@@ -35,8 +35,8 @@ parking_lot = "0.11"
 plain_hasher = "0.2"
 prost = "0.6"
 reqwest = { version = "0.10", features = ["json"] }
-rlp = "0.4"
-rlp-derive = "0.1"
+rlp = { git = "https://github.com/paritytech/parity-common" }
+rlp-derive = { git = "https://github.com/paritytech/parity-common" }
 secp256k1 = { version = "0.19", features = ["endomorphism", "global-context", "rand-std"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
