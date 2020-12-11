@@ -59,3 +59,6 @@ tonic-build = "0.3"
 
 [dev-dependencies]
 rand = "0.7"
+
+[patch."https://github.com/sigp/discv5"]
+discv5 = { git = "https://github.com/vorot93/discv5", branch = "bytes" }
