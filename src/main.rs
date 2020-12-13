@@ -407,6 +407,10 @@ impl<C: Control, DP: DataProvider> CapabilityServer for CapabilityServerImpl<C, 
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    real_main().compat().await
+}
+
+async fn real_main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
         .init();
@@ -444,7 +448,6 @@ async fn main() -> anyhow::Result<()> {
             async {
                 TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default()).await
             }
-            .compat()
             .await?,
         ));
 
@@ -642,7 +645,6 @@ async fn main() -> anyhow::Result<()> {
         Server::builder()
             .add_service(svc)
             .serve(sentry_addr)
-            .compat()
             .await
             .unwrap();
     });

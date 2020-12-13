@@ -165,7 +165,6 @@ impl Web3DataProvider {
             .client
             .eth()
             .transaction(id.into())
-            .compat()
             .await?
             .ok_or_else(|| anyhow!("Transaction not found"))?
             .raw
@@ -181,12 +180,11 @@ impl DataProvider for Web3DataProvider {
     async fn get_status_data(&self) -> anyhow::Result<StatusData> {
         let network_id = 1;
 
-        let best_block_number = self.client.eth().block_number().compat().await?.as_u64();
+        let best_block_number = self.client.eth().block_number().await?.as_u64();
         let best_block = self
             .client
             .eth()
             .block(U64::from(best_block_number).into())
-            .compat()
             .await?
             .ok_or_else(|| anyhow!("no current block?"))?;
 
@@ -215,7 +213,6 @@ impl DataProvider for Web3DataProvider {
                     .result,
             )
         }
-        .compat()
         .await?;
 
         Ok(StatusData {
@@ -231,7 +228,6 @@ impl DataProvider for Web3DataProvider {
             .client
             .eth()
             .block(block.into())
-            .compat()
             .await?
             .and_then(|block| block.number)
             .map(|v| v.as_u64()))
@@ -246,7 +242,6 @@ impl DataProvider for Web3DataProvider {
                         .client
                         .eth()
                         .block(block.into())
-                        .compat()
                         .await?
                         .ok_or_else(|| anyhow!("Block not found"))?;
 
@@ -267,7 +262,6 @@ impl DataProvider for Web3DataProvider {
                             .client
                             .eth()
                             .block_with_raw_txs(id.into())
-                            .compat()
                             .await?
                             .ok_or_else(|| anyhow!("Block not found"))?;
 
@@ -285,7 +279,6 @@ impl DataProvider for Web3DataProvider {
                                             self.client
                                                 .eth()
                                                 .uncle(id.into(), i.into())
-                                                .compat()
                                                 .await?
                                                 .ok_or_else(|| anyhow!("Uncle not found"))?,
                                         )
