@@ -308,6 +308,89 @@ impl<C: Control, DP: DataProvider> CapabilityServerImpl<C, DP> {
                             })
                             .await;
                     }
+                    Some(MessageId::NewPooledTransactionHashes) if valid_peer => {
+                        debug!("NewPooledTransactionHashes");
+                        let mut txpool = match &*self.txpool {
+                            Some(t) => t.clone(),
+                            None => return Ok(None),
+                        };
+
+                        let hashes = Rlp::new(&*data)
+                            .as_list::<H256>()
+                            .map_err(|_| DisconnectReason::ProtocolBreach)?
+                            .into_iter()
+                            .map(|h| h.as_bytes().to_vec())
+                            .collect();
+
+                        let rsp = txpool.find_unknown_transactions(TxHashes { hashes }).await;
+                        let mut txs = match rsp {
+                            Ok(t) => t.into_inner().hashes,
+                            Err(e) => {
+                                warn!("Finding unknown transactions failed: {}", e);
+                                return Ok(None);
+                            }
+                        };
+
+                        txs.truncate(256); // TODO: Send multiple messages to get all txs.
+
+                        let reply = Message {
+                            id: MessageId::GetPooledTransactions as usize,
+                            data: rlp::encode_list::<Vec<u8>, _>(&txs).into(),
+                        };
+
+                        return Ok(Some(reply));
+                    }
+                    Some(MessageId::PooledTransactions) if valid_peer => {
+                        debug!("PooledTransactions");
+                        let mut txpool = match &*self.txpool {
+                            Some(t) => t.clone(),
+                            None => return Ok(None),
+                        };
+
+                        let txs = Rlp::new(&*data)
+                            .iter()
+                            .map(|r| r.as_raw().to_vec())
+                            .collect();
+
+                        let req = ImportRequest { txs };
+
+                        let rsp = txpool.import_transactions(req).await;
+                        let results = match rsp {
+                            Err(e) => {
+                                warn!("Importing transactions failed: {}", e);
+                                return Ok(None);
+                            }
+                            Ok(r) => r.into_inner(),
+                        };
+
+                        let mut success = 0;
+                        let mut exists = 0;
+                        let mut fee = 0;
+                        let mut stale = 0;
+                        let mut invalid = 0;
+                        let mut error = 0;
+
+                        for result in results.imported {
+                            match ImportResult::from_i32(result) {
+                                Some(ImportResult::Success) => success += 1,
+                                Some(ImportResult::AlreadyExists) => exists += 1,
+                                Some(ImportResult::FeeTooLow) => fee += 1,
+                                Some(ImportResult::Stale) => stale += 1,
+                                Some(ImportResult::Invalid) => invalid += 1,
+                                None | Some(ImportResult::InternalError) => error += 1,
+                            }
+                        }
+
+                        info!(
+                            "Imported transactions: success={} exists={} fee={} stale={} invalid={} error={}",
+                            success,
+                            exists,
+                            fee,
+                            stale,
+                            invalid,
+                            error,
+                        );
+                    }
                     Some(MessageId::GetPooledTransactions) if valid_peer => {
                         let mut out = Bytes::from_static(&rlp::EMPTY_LIST_RLP);
                         if let Some(txpool) = &*self.txpool {
