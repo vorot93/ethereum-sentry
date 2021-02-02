@@ -6,6 +6,7 @@ use crate::{
     grpc::{
         control::{InboundMessage, InboundMessageId},
         sentry::sentry_server::SentryServer,
+        txpool::{txpool_client::*, *},
     },
     services::*,
 };
@@ -17,6 +18,7 @@ use clap::Clap;
 use devp2p::*;
 use educe::Educe;
 use ethereum_forkid::ForkFilter;
+use ethereum_types::*;
 use futures::stream::BoxStream;
 use maplit::btreemap;
 use num_traits::{FromPrimitive, ToPrimitive};
@@ -116,6 +118,7 @@ where
     valid_peers: Arc<RwLock<HashSet<PeerId>>>,
     control: C,
     data_provider: DP,
+    txpool: Arc<Option<TxpoolClient<tonic::transport::Channel>>>,
 }
 
 impl<C: Control, DP: DataProvider> CapabilityServerImpl<C, DP> {
@@ -306,9 +309,27 @@ impl<C: Control, DP: DataProvider> CapabilityServerImpl<C, DP> {
                             .await;
                     }
                     Some(MessageId::GetPooledTransactions) if valid_peer => {
+                        let mut out = Bytes::from_static(&rlp::EMPTY_LIST_RLP);
+                        if let Some(txpool) = &*self.txpool {
+                            let hashes = Rlp::new(&*data)
+                                .as_list::<H256>()
+                                .map_err(|_| DisconnectReason::ProtocolBreach)?;
+                            if let Ok(rsp) = txpool
+                                .clone()
+                                .get_transactions(GetTransactionsRequest {
+                                    hashes: hashes
+                                        .into_iter()
+                                        .map(|hash| hash.as_bytes().to_vec())
+                                        .collect(),
+                                })
+                                .await
+                            {
+                                out = rlp::encode_list::<Vec<u8>, _>(&rsp.into_inner().txs).into();
+                            }
+                        }
                         return Ok(Some(Message {
                             id: MessageId::PooledTransactions.to_usize().unwrap(),
-                            data: Bytes::from_static(&rlp::EMPTY_LIST_RLP),
+                            data: out,
                         }));
                     }
                     _ => {}
@@ -541,6 +562,13 @@ async fn main() -> anyhow::Result<()> {
     } else {
         Arc::new(DummyControl)
     };
+
+    let txpool = Arc::new(if let Some(addr) = opts.txpool_addr {
+        Some(TxpoolClient::connect(addr.to_string()).await?)
+    } else {
+        None
+    });
+
     let status_message: Arc<RwLock<Option<(StatusData, ForkFilter)>>> = Default::default();
 
     tasks.spawn_with_name("Status updater", {
@@ -609,6 +637,7 @@ async fn main() -> anyhow::Result<()> {
         valid_peers: Default::default(),
         control,
         data_provider,
+        txpool,
     });
 
     let swarm = Swarm::builder()
