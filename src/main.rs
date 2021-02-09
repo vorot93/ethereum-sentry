@@ -6,7 +6,7 @@ use crate::{
     grpc::{
         control::{InboundMessage, InboundMessageId},
         sentry::sentry_server::SentryServer,
-        txpool::{txpool_client::*, *},
+        txpool::ImportResult,
     },
     services::*,
 };
@@ -105,10 +105,11 @@ impl BlockTracker {
 
 #[derive(Educe)]
 #[educe(Debug)]
-pub struct CapabilityServerImpl<C, DP>
+pub struct CapabilityServerImpl<C, DP, TxPool>
 where
     C: Debug,
     DP: Debug,
+    TxPool: Debug,
 {
     #[educe(Debug(ignore))]
     peer_pipes: Arc<RwLock<HashMap<PeerId, Pipes>>>,
@@ -118,10 +119,10 @@ where
     valid_peers: Arc<RwLock<HashSet<PeerId>>>,
     control: C,
     data_provider: DP,
-    txpool: Arc<Option<TxpoolClient<tonic::transport::Channel>>>,
+    txpool: TxPool,
 }
 
-impl<C: Control, DP: DataProvider> CapabilityServerImpl<C, DP> {
+impl<C: Control, DP: DataProvider, TxPool: Txpool> CapabilityServerImpl<C, DP, TxPool> {
     fn setup_peer(&self, peer: PeerId, p: Pipes) {
         let mut pipes = self.peer_pipes.write();
         let mut block_tracker = self.block_tracker.write();
@@ -310,21 +311,13 @@ impl<C: Control, DP: DataProvider> CapabilityServerImpl<C, DP> {
                     }
                     Some(MessageId::NewPooledTransactionHashes) if valid_peer => {
                         debug!("NewPooledTransactionHashes");
-                        let mut txpool = match &*self.txpool {
-                            Some(t) => t.clone(),
-                            None => return Ok(None),
-                        };
-
                         let hashes = Rlp::new(&*data)
                             .as_list::<H256>()
-                            .map_err(|_| DisconnectReason::ProtocolBreach)?
-                            .into_iter()
-                            .map(|h| h.as_bytes().to_vec())
-                            .collect();
+                            .map_err(|_| DisconnectReason::ProtocolBreach)?;
 
-                        let rsp = txpool.find_unknown_transactions(TxHashes { hashes }).await;
+                        let rsp = self.txpool.find_unknown_transactions(&hashes).await;
                         let mut txs = match rsp {
-                            Ok(t) => t.into_inner().hashes,
+                            Ok(t) => t,
                             Err(e) => {
                                 warn!("Finding unknown transactions failed: {}", e);
                                 return Ok(None);
@@ -332,6 +325,9 @@ impl<C: Control, DP: DataProvider> CapabilityServerImpl<C, DP> {
                         };
 
                         txs.truncate(256); // TODO: Send multiple messages to get all txs.
+
+                        let txs: Vec<_> =
+                            txs.into_iter().map(|tx| tx.as_bytes().to_vec()).collect();
 
                         let reply = Message {
                             id: MessageId::GetPooledTransactions as usize,
@@ -342,25 +338,17 @@ impl<C: Control, DP: DataProvider> CapabilityServerImpl<C, DP> {
                     }
                     Some(MessageId::PooledTransactions) if valid_peer => {
                         debug!("PooledTransactions");
-                        let mut txpool = match &*self.txpool {
-                            Some(t) => t.clone(),
-                            None => return Ok(None),
-                        };
-
                         let txs = Rlp::new(&*data)
                             .iter()
                             .map(|r| r.as_raw().to_vec())
                             .collect();
 
-                        let req = ImportRequest { txs };
-
-                        let rsp = txpool.import_transactions(req).await;
-                        let results = match rsp {
+                        let results = match self.txpool.import_transactions(txs).await {
                             Err(e) => {
                                 warn!("Importing transactions failed: {}", e);
                                 return Ok(None);
                             }
-                            Ok(r) => r.into_inner(),
+                            Ok(r) => r,
                         };
 
                         let mut success = 0;
@@ -370,14 +358,14 @@ impl<C: Control, DP: DataProvider> CapabilityServerImpl<C, DP> {
                         let mut invalid = 0;
                         let mut error = 0;
 
-                        for result in results.imported {
-                            match ImportResult::from_i32(result) {
-                                Some(ImportResult::Success) => success += 1,
-                                Some(ImportResult::AlreadyExists) => exists += 1,
-                                Some(ImportResult::FeeTooLow) => fee += 1,
-                                Some(ImportResult::Stale) => stale += 1,
-                                Some(ImportResult::Invalid) => invalid += 1,
-                                None | Some(ImportResult::InternalError) => error += 1,
+                        for result in results {
+                            match result {
+                                ImportResult::Success => success += 1,
+                                ImportResult::AlreadyExists => exists += 1,
+                                ImportResult::FeeTooLow => fee += 1,
+                                ImportResult::Stale => stale += 1,
+                                ImportResult::Invalid => invalid += 1,
+                                ImportResult::InternalError => error += 1,
                             }
                         }
 
@@ -393,23 +381,14 @@ impl<C: Control, DP: DataProvider> CapabilityServerImpl<C, DP> {
                     }
                     Some(MessageId::GetPooledTransactions) if valid_peer => {
                         let mut out = Bytes::from_static(&rlp::EMPTY_LIST_RLP);
-                        if let Some(txpool) = &*self.txpool {
-                            let hashes = Rlp::new(&*data)
-                                .as_list::<H256>()
-                                .map_err(|_| DisconnectReason::ProtocolBreach)?;
-                            if let Ok(rsp) = txpool
-                                .clone()
-                                .get_transactions(GetTransactionsRequest {
-                                    hashes: hashes
-                                        .into_iter()
-                                        .map(|hash| hash.as_bytes().to_vec())
-                                        .collect(),
-                                })
-                                .await
-                            {
-                                out = rlp::encode_list::<Vec<u8>, _>(&rsp.into_inner().txs).into();
-                            }
+                        let hashes = Rlp::new(&*data)
+                            .as_list::<H256>()
+                            .map_err(|_| DisconnectReason::ProtocolBreach)?;
+
+                        if let Ok(rsp) = self.txpool.get_transactions(&hashes).await {
+                            out = rlp::encode_list::<Vec<u8>, _>(&rsp).into();
                         }
+
                         return Ok(Some(Message {
                             id: MessageId::PooledTransactions.to_usize().unwrap(),
                             data: out,
@@ -425,7 +404,12 @@ impl<C: Control, DP: DataProvider> CapabilityServerImpl<C, DP> {
 }
 
 #[async_trait]
-impl<C: Control, DP: DataProvider> CapabilityServer for CapabilityServerImpl<C, DP> {
+impl<C, DP, TxPool> CapabilityServer for CapabilityServerImpl<C, DP, TxPool>
+where
+    C: Control,
+    DP: DataProvider,
+    TxPool: Txpool,
+{
     #[instrument(skip(self, peer), level = "debug", fields(peer=&*peer.to_string()))]
     fn on_peer_connect(&self, peer: PeerId, caps: HashMap<CapabilityName, CapabilityVersion>) {
         let first_events = if let Some((status_data, fork_filter)) = &*self.status_message.read() {
@@ -646,11 +630,10 @@ async fn main() -> anyhow::Result<()> {
         Arc::new(DummyControl)
     };
 
-    let txpool = Arc::new(if let Some(addr) = opts.txpool_addr {
-        Some(TxpoolClient::connect(addr.to_string()).await?)
-    } else {
-        None
-    });
+    let txpool: Arc<dyn Txpool> = match opts.txpool_addr {
+        Some(addr) => Arc::new(GrpcTxpool::connect(addr.to_string()).await?),
+        None => Arc::new(DummyTxpool),
+    };
 
     let status_message: Arc<RwLock<Option<(StatusData, ForkFilter)>>> = Default::default();
 
