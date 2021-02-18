@@ -23,7 +23,7 @@ impl GrpcTxpool {
 #[async_trait]
 impl Txpool for GrpcTxpool {
     async fn find_unknown_transactions(&self, txs: &[H256]) -> Result<Vec<H256>> {
-        let hashes = txs.into_iter().map(|h| h.as_bytes().to_vec()).collect();
+        let hashes = txs.iter().map(|h| h.as_bytes().to_vec()).collect();
         self.client
             .clone()
             .find_unknown_transactions(TxHashes { hashes })
@@ -63,10 +63,7 @@ impl Txpool for GrpcTxpool {
 
     async fn get_transactions(&self, hashes: &[H256]) -> Result<Vec<Vec<u8>>> {
         let req = GetTransactionsRequest {
-            hashes: hashes
-                .into_iter()
-                .map(|hash| hash.as_bytes().to_vec())
-                .collect(),
+            hashes: hashes.iter().map(|hash| hash.as_bytes().to_vec()).collect(),
         };
 
         let res = self
