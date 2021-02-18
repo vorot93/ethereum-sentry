@@ -1,4 +1,4 @@
-use super::{Control, DataProvider};
+use super::{Control, DataProvider, Txpool};
 use crate::{
     eth::*,
     grpc::sentry::{sentry_server::*, OutboundMessageData, SentPeers},
@@ -14,28 +14,31 @@ use tokio_stream::StreamExt;
 use tonic::Response;
 
 #[derive(Clone, Debug)]
-pub struct SentryService<C, DP>
+pub struct SentryService<C, DP, TxPool>
 where
     C: Debug,
     DP: Debug,
+    TxPool: Debug,
 {
-    capability_server: Arc<CapabilityServerImpl<C, DP>>,
+    capability_server: Arc<CapabilityServerImpl<C, DP, TxPool>>,
 }
 
-impl<C, DP> SentryService<C, DP>
+impl<C, DP, TxPool> SentryService<C, DP, TxPool>
 where
     C: Debug,
     DP: Debug,
+    TxPool: Debug,
 {
-    pub fn new(capability_server: Arc<CapabilityServerImpl<C, DP>>) -> Self {
+    pub fn new(capability_server: Arc<CapabilityServerImpl<C, DP, TxPool>>) -> Self {
         Self { capability_server }
     }
 }
 
-impl<C, DP> SentryService<C, DP>
+impl<C, DP, TxPool> SentryService<C, DP, TxPool>
 where
     C: Control,
     DP: DataProvider,
+    TxPool: Txpool,
 {
     async fn send_by_predicate<F, IT>(
         &self,
@@ -43,7 +46,7 @@ where
         pred: F,
     ) -> SentPeers
     where
-        F: FnOnce(&CapabilityServerImpl<C, DP>) -> IT,
+        F: FnOnce(&CapabilityServerImpl<C, DP, TxPool>) -> IT,
         IT: IntoIterator<Item = PeerId>,
     {
         if let Some(data) = request {
@@ -87,10 +90,11 @@ where
 }
 
 #[async_trait]
-impl<C, DP> Sentry for SentryService<C, DP>
+impl<C, DP, TxPool> Sentry for SentryService<C, DP, TxPool>
 where
     C: Control,
     DP: DataProvider,
+    TxPool: Txpool,
 {
     async fn penalize_peer(
         &self,

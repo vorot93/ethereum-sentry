@@ -6,6 +6,7 @@ use crate::{
     grpc::{
         control::{InboundMessage, InboundMessageId},
         sentry::sentry_server::SentryServer,
+        txpool::ImportResult,
     },
     services::*,
 };
@@ -17,6 +18,7 @@ use clap::Clap;
 use devp2p::*;
 use educe::Educe;
 use ethereum_forkid::ForkFilter;
+use ethereum_types::*;
 use futures::stream::BoxStream;
 use maplit::btreemap;
 use num_traits::{FromPrimitive, ToPrimitive};
@@ -103,10 +105,11 @@ impl BlockTracker {
 
 #[derive(Educe)]
 #[educe(Debug)]
-pub struct CapabilityServerImpl<C, DP>
+pub struct CapabilityServerImpl<C, DP, TxPool>
 where
     C: Debug,
     DP: Debug,
+    TxPool: Debug,
 {
     #[educe(Debug(ignore))]
     peer_pipes: Arc<RwLock<HashMap<PeerId, Pipes>>>,
@@ -116,9 +119,10 @@ where
     valid_peers: Arc<RwLock<HashSet<PeerId>>>,
     control: C,
     data_provider: DP,
+    txpool: TxPool,
 }
 
-impl<C: Control, DP: DataProvider> CapabilityServerImpl<C, DP> {
+impl<C: Control, DP: DataProvider, TxPool: Txpool> CapabilityServerImpl<C, DP, TxPool> {
     fn setup_peer(&self, peer: PeerId, p: Pipes) {
         let mut pipes = self.peer_pipes.write();
         let mut block_tracker = self.block_tracker.write();
@@ -305,10 +309,89 @@ impl<C: Control, DP: DataProvider> CapabilityServerImpl<C, DP> {
                             })
                             .await;
                     }
+                    Some(MessageId::NewPooledTransactionHashes) if valid_peer => {
+                        debug!("NewPooledTransactionHashes");
+                        let hashes = Rlp::new(&*data)
+                            .as_list::<H256>()
+                            .map_err(|_| DisconnectReason::ProtocolBreach)?;
+
+                        let rsp = self.txpool.find_unknown_transactions(&hashes).await;
+                        let mut txs = match rsp {
+                            Ok(t) => t,
+                            Err(e) => {
+                                warn!("Finding unknown transactions failed: {}", e);
+                                return Ok(None);
+                            }
+                        };
+
+                        txs.truncate(256); // TODO: Send multiple messages to get all txs.
+
+                        let txs: Vec<_> =
+                            txs.into_iter().map(|tx| tx.as_bytes().to_vec()).collect();
+
+                        let reply = Message {
+                            id: MessageId::GetPooledTransactions as usize,
+                            data: rlp::encode_list::<Vec<u8>, _>(&txs).into(),
+                        };
+
+                        return Ok(Some(reply));
+                    }
+                    Some(MessageId::PooledTransactions) if valid_peer => {
+                        debug!("PooledTransactions");
+                        let txs = Rlp::new(&*data)
+                            .iter()
+                            .map(|r| r.as_raw().to_vec())
+                            .collect();
+
+                        let results = match self.txpool.import_transactions(txs).await {
+                            Err(e) => {
+                                warn!("Importing transactions failed: {}", e);
+                                return Ok(None);
+                            }
+                            Ok(r) => r,
+                        };
+
+                        let mut success = 0;
+                        let mut exists = 0;
+                        let mut fee = 0;
+                        let mut stale = 0;
+                        let mut invalid = 0;
+                        let mut error = 0;
+
+                        for result in results {
+                            match result {
+                                ImportResult::Success => success += 1,
+                                ImportResult::AlreadyExists => exists += 1,
+                                ImportResult::FeeTooLow => fee += 1,
+                                ImportResult::Stale => stale += 1,
+                                ImportResult::Invalid => invalid += 1,
+                                ImportResult::InternalError => error += 1,
+                            }
+                        }
+
+                        info!(
+                            "Imported transactions: success={} exists={} fee={} stale={} invalid={} error={}",
+                            success,
+                            exists,
+                            fee,
+                            stale,
+                            invalid,
+                            error,
+                        );
+                    }
                     Some(MessageId::GetPooledTransactions) if valid_peer => {
+                        let mut out = Bytes::from_static(&rlp::EMPTY_LIST_RLP);
+                        let hashes = Rlp::new(&*data)
+                            .as_list::<H256>()
+                            .map_err(|_| DisconnectReason::ProtocolBreach)?;
+
+                        if let Ok(rsp) = self.txpool.get_transactions(&hashes).await {
+                            out = rlp::encode_list::<Vec<u8>, _>(&rsp).into();
+                        }
+
                         return Ok(Some(Message {
                             id: MessageId::PooledTransactions.to_usize().unwrap(),
-                            data: Bytes::from_static(&rlp::EMPTY_LIST_RLP),
+                            data: out,
                         }));
                     }
                     _ => {}
@@ -321,7 +404,12 @@ impl<C: Control, DP: DataProvider> CapabilityServerImpl<C, DP> {
 }
 
 #[async_trait]
-impl<C: Control, DP: DataProvider> CapabilityServer for CapabilityServerImpl<C, DP> {
+impl<C, DP, TxPool> CapabilityServer for CapabilityServerImpl<C, DP, TxPool>
+where
+    C: Control,
+    DP: DataProvider,
+    TxPool: Txpool,
+{
     #[instrument(skip(self, peer), level = "debug", fields(peer=&*peer.to_string()))]
     fn on_peer_connect(&self, peer: PeerId, caps: HashMap<CapabilityName, CapabilityVersion>) {
         let first_events = if let Some((status_data, fork_filter)) = &*self.status_message.read() {
@@ -541,6 +629,12 @@ async fn main() -> anyhow::Result<()> {
     } else {
         Arc::new(DummyControl)
     };
+
+    let txpool: Arc<dyn Txpool> = match opts.txpool_addr {
+        Some(addr) => Arc::new(GrpcTxpool::connect(addr.to_string()).await?),
+        None => Arc::new(DummyTxpool),
+    };
+
     let status_message: Arc<RwLock<Option<(StatusData, ForkFilter)>>> = Default::default();
 
     tasks.spawn_with_name("Status updater", {
@@ -609,6 +703,7 @@ async fn main() -> anyhow::Result<()> {
         valid_peers: Default::default(),
         control,
         data_provider,
+        txpool,
     });
 
     let swarm = Swarm::builder()

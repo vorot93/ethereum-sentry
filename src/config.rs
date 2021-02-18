@@ -82,4 +82,5 @@ pub struct Config {
     #[educe(Default(expression = "DataProviderSettings::Dummy"))]
     pub data_provider: DataProviderSettings,
     pub control_addr: Option<Url>,
+    pub txpool_addr: Option<Url>,
 }
