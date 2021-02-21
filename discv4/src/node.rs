@@ -839,26 +839,24 @@ impl Node {
                 ))
             });
 
-            for message in join_all(fut).await {
-                if let Some((d, messages)) = message {
-                    nearest_nodes
-                        .get_mut(&d)
-                        .expect("we just got this node from the nearest node set")
-                        .responded = true;
-                    for message in messages {
-                        // If we have a node...
-                        for record in message.nodes.into_iter() {
-                            // ...and it's not been seen yet...
-                            if let btree_map::Entry::Vacant(vacant) =
-                                nearest_nodes.entry(distance(target, record.id))
-                            {
-                                // ...add to the set and continue the query
-                                vacant.insert(QueryNode {
-                                    record,
-                                    queried: false,
-                                    responded: false,
-                                });
-                            }
+            for (d, messages) in join_all(fut).await.into_iter().flatten() {
+                nearest_nodes
+                    .get_mut(&d)
+                    .expect("we just got this node from the nearest node set")
+                    .responded = true;
+                for message in messages {
+                    // If we have a node...
+                    for record in message.nodes.into_iter() {
+                        // ...and it's not been seen yet...
+                        if let btree_map::Entry::Vacant(vacant) =
+                            nearest_nodes.entry(distance(target, record.id))
+                        {
+                            // ...add to the set and continue the query
+                            vacant.insert(QueryNode {
+                                record,
+                                queried: false,
+                                responded: false,
+                            });
                         }
                     }
                 }
