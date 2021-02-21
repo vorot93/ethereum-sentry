@@ -1,35 +1,28 @@
-use crate::eth::MessageId;
+use crate::eth::EthMessageId;
 use anyhow::bail;
 use std::convert::TryFrom;
 
-pub mod txpool {
-    tonic::include_proto!("txpool");
-}
+pub use ethereum_interfaces::sentry;
 
-pub mod control {
-    tonic::include_proto!("control");
-}
-
-pub mod sentry {
-    tonic::include_proto!("sentry");
-}
-
-impl TryFrom<MessageId> for control::InboundMessageId {
+impl TryFrom<EthMessageId> for sentry::MessageId {
     type Error = anyhow::Error;
 
-    fn try_from(id: MessageId) -> Result<Self, Self::Error> {
+    fn try_from(id: EthMessageId) -> Result<Self, Self::Error> {
         Ok(match id {
-            MessageId::NewBlockHashes => Self::NewBlockHashes,
-            MessageId::BlockHeaders => Self::BlockHeaders,
-            MessageId::BlockBodies => Self::BlockBodies,
-            MessageId::NewBlock => Self::NewBlock,
-            MessageId::NodeData => Self::NodeData,
+            EthMessageId::NewBlockHashes => Self::NewBlockHashes,
+            EthMessageId::GetBlockHeaders => Self::GetBlockHeaders,
+            EthMessageId::BlockHeaders => Self::BlockHeaders,
+            EthMessageId::GetBlockBodies => Self::GetBlockBodies,
+            EthMessageId::BlockBodies => Self::BlockBodies,
+            EthMessageId::NewBlock => Self::NewBlock,
+            EthMessageId::GetNodeData => Self::GetNodeData,
+            EthMessageId::NodeData => Self::NodeData,
             other => bail!("Invalid message id: {:?}", other),
         })
     }
 }
 
-impl MessageId {
+impl EthMessageId {
     pub fn from_outbound_message_id(id: i32) -> Option<Self> {
         Some(match id {
             0 => Self::GetBlockHeaders,
@@ -40,12 +33,17 @@ impl MessageId {
     }
 }
 
-impl From<sentry::OutboundMessageId> for MessageId {
-    fn from(id: sentry::OutboundMessageId) -> Self {
+impl From<sentry::MessageId> for EthMessageId {
+    fn from(id: sentry::MessageId) -> Self {
         match id {
-            sentry::OutboundMessageId::GetBlockHeaders => Self::GetBlockHeaders,
-            sentry::OutboundMessageId::GetBlockBodies => Self::GetBlockBodies,
-            sentry::OutboundMessageId::GetNodeData => Self::GetNodeData,
+            sentry::MessageId::NewBlockHashes => Self::NewBlockHashes,
+            sentry::MessageId::GetBlockHeaders => Self::GetBlockHeaders,
+            sentry::MessageId::BlockHeaders => Self::BlockHeaders,
+            sentry::MessageId::GetBlockBodies => Self::GetBlockBodies,
+            sentry::MessageId::BlockBodies => Self::BlockBodies,
+            sentry::MessageId::NewBlock => Self::NewBlock,
+            sentry::MessageId::GetNodeData => Self::GetNodeData,
+            sentry::MessageId::NodeData => Self::NodeData,
         }
     }
 }

@@ -93,8 +93,8 @@ impl From<NodeRecord> for Endpoint {
     ) -> Self {
         Self {
             address,
-            tcp_port,
             udp_port,
+            tcp_port,
         }
     }
 }

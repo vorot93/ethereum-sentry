@@ -19,13 +19,13 @@ impl CapabilityServer for DummyServer {
         info!("Peer connected")
     }
 
-    #[instrument(skip(self, peer, event), fields(peer=&*peer.to_string(), event=&*event.to_string()))]
-    async fn on_peer_event(&self, peer: PeerId, event: InboundEvent) {
+    #[instrument(skip(self, _peer, _event), fields(peer=&*_peer.to_string(), event=&*_event.to_string()))]
+    async fn on_peer_event(&self, _peer: PeerId, _event: InboundEvent) {
         info!("Received event");
     }
 
-    #[instrument(skip(self, peer), fields(peer=&*peer.to_string()))]
-    async fn next(&self, peer: PeerId) -> OutboundEvent {
+    #[instrument(skip(self, _peer), fields(peer=&*_peer.to_string()))]
+    async fn next(&self, _peer: PeerId) -> OutboundEvent {
         futures::future::pending().await
     }
 }
