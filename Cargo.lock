@@ -886,6 +886,7 @@ dependencies = [
  "parking_lot",
  "plain_hasher",
  "prost",
+ "prost-build",
  "rand 0.8.3",
  "reqwest",
  "rlp",
@@ -2824,6 +2825,7 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]

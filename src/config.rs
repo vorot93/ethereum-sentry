@@ -6,7 +6,6 @@ use educe::Educe;
 use serde::Deserialize;
 use serde_with::DeserializeFromStr;
 use std::path::PathBuf;
-use url::Url;
 
 #[derive(Educe, Clap)]
 #[clap(
@@ -55,13 +54,6 @@ pub struct Discv5Config {
     pub bootnodes: Vec<discv5::Enr>,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(tag = "kind", rename_all = "lowercase")]
-pub enum DataProviderSettings {
-    Dummy,
-    Tarpc { addr: Url },
-}
-
 #[derive(Educe, Deserialize)]
 #[educe(Default, Debug)]
 #[serde(default)]
@@ -79,8 +71,5 @@ pub struct Config {
     pub reserved_peers: Vec<NR>,
     #[educe(Default(50))]
     pub max_peers: usize,
-    #[educe(Default(expression = "DataProviderSettings::Dummy"))]
-    pub data_provider: DataProviderSettings,
-    pub control_addr: Option<Url>,
-    pub txpool_addr: Option<Url>,
+    pub peers_file: Option<PathBuf>,
 }

@@ -1,5 +1,16 @@
+fn config() -> prost_build::Config {
+    let mut config = prost_build::Config::new();
+    config.bytes(&["."]);
+    config
+}
+
 fn main() {
-    tonic_build::compile_protos("proto/txpool/txpool.proto").unwrap();
-    tonic_build::compile_protos("proto/p2psentry/control.proto").unwrap();
-    tonic_build::compile_protos("proto/p2psentry/sentry.proto").unwrap();
+    tonic_build::configure()
+        .build_client(false)
+        .compile_with_config(
+            config(),
+            &["proto/p2psentry/sentry.proto"],
+            &["proto/p2psentry"],
+        )
+        .unwrap();
 }

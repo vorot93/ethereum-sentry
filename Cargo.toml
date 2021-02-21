@@ -50,7 +50,7 @@ tarpc = { version = "0.24", features = ["full"] }
 task-group = { git = "https://github.com/vorot93/task-group" }
 tokio = { version = "1", features = ["full"] }
 tokio-serde = { version = "0.8", features = ["bincode"] }
-tokio-stream = "0.1"
+tokio-stream = { version = "0.1", features = ["sync"] }
 toml = "0.5"
 tonic = { version = "0.4", features = ["tls"] }
 tonic-health = "0.3"
@@ -61,6 +61,7 @@ trust-dns-resolver = "0.20"
 url = { version = "2", features = ["serde"] }
 
 [build-dependencies]
+prost-build = "0.7"
 tonic-build = "0.4"
 
 [dev-dependencies]

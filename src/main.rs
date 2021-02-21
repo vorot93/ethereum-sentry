@@ -3,30 +3,24 @@
 use crate::{
     config::*,
     eth::*,
-    grpc::{
-        control::{InboundMessage, InboundMessageId},
-        sentry::sentry_server::SentryServer,
-        txpool::ImportResult,
-    },
+    grpc::sentry::{sentry_server::SentryServer, InboundMessage},
     services::*,
 };
 use anyhow::{anyhow, Context};
 use async_stream::stream;
 use async_trait::async_trait;
-use bytes::Bytes;
 use clap::Clap;
 use devp2p::*;
 use educe::Educe;
 use ethereum_forkid::ForkFilter;
-use ethereum_types::*;
 use futures::stream::BoxStream;
+use grpc::sentry;
 use maplit::btreemap;
 use num_traits::{FromPrimitive, ToPrimitive};
 use parking_lot::RwLock;
-use rlp::Rlp;
 use secp256k1::{PublicKey, SecretKey, SECP256K1};
 use std::{
-    collections::{btree_map::Entry, BTreeMap, HashMap, HashSet},
+    collections::{btree_map::Entry, hash_map::Entry as HashMapEntry, BTreeMap, HashMap, HashSet},
     convert::TryFrom,
     fmt::Debug,
     sync::Arc,
@@ -35,6 +29,7 @@ use std::{
 use task_group::TaskGroup;
 use tokio::{
     sync::{
+        broadcast::{channel as broadcast, Sender as BroadcastSender},
         mpsc::{channel, Sender},
         Mutex as AsyncMutex,
     },
@@ -68,16 +63,27 @@ struct BlockTracker {
 }
 
 impl BlockTracker {
-    fn set_block_number(&mut self, peer: PeerId, block: u64) {
-        if let Some(old_block) = self.block_by_peer.insert(peer, block) {
-            if let Entry::Occupied(mut entry) = self.peers_by_block.entry(old_block) {
-                entry.get_mut().remove(&peer);
+    fn set_block_number(&mut self, peer: PeerId, block: u64, force_create: bool) {
+        match self.block_by_peer.entry(peer) {
+            HashMapEntry::Vacant(e) => {
+                if force_create {
+                    e.insert(block);
+                } else {
+                    return;
+                }
+            }
+            HashMapEntry::Occupied(mut e) => {
+                let old_block = std::mem::replace(e.get_mut(), block);
+                if let Entry::Occupied(mut entry) = self.peers_by_block.entry(old_block) {
+                    entry.get_mut().remove(&peer);
 
-                if entry.get().is_empty() {
-                    entry.remove();
+                    if entry.get().is_empty() {
+                        entry.remove();
+                    }
                 }
             }
         }
+
         self.peers_by_block.entry(block).or_default().insert(peer);
     }
 
@@ -105,30 +111,26 @@ impl BlockTracker {
 
 #[derive(Educe)]
 #[educe(Debug)]
-pub struct CapabilityServerImpl<C, DP, TxPool>
-where
-    C: Debug,
-    DP: Debug,
-    TxPool: Debug,
-{
+pub struct CapabilityServerImpl {
     #[educe(Debug(ignore))]
     peer_pipes: Arc<RwLock<HashMap<PeerId, Pipes>>>,
     block_tracker: Arc<RwLock<BlockTracker>>,
 
     status_message: Arc<RwLock<Option<(StatusData, ForkFilter)>>>,
     valid_peers: Arc<RwLock<HashSet<PeerId>>>,
-    control: C,
-    data_provider: DP,
-    txpool: TxPool,
+
+    data_sender: BroadcastSender<InboundMessage>,
+    upload_requests_sender: BroadcastSender<InboundMessage>,
+    tx_message_sender: BroadcastSender<InboundMessage>,
 }
 
-impl<C: Control, DP: DataProvider, TxPool: Txpool> CapabilityServerImpl<C, DP, TxPool> {
+impl CapabilityServerImpl {
     fn setup_peer(&self, peer: PeerId, p: Pipes) {
         let mut pipes = self.peer_pipes.write();
         let mut block_tracker = self.block_tracker.write();
 
         assert!(pipes.insert(peer, p).is_none());
-        block_tracker.set_block_number(peer, 0);
+        block_tracker.set_block_number(peer, 0, true);
     }
     fn get_pipes(&self, peer: PeerId) -> Option<Pipes> {
         self.peer_pipes.read().get(&peer).cloned()
@@ -179,12 +181,12 @@ impl<C: Control, DP: DataProvider, TxPool: Txpool> CapabilityServerImpl<C, DP, T
                 ..
             } => {
                 let valid_peer = self.valid_peers.read().contains(&peer);
-                let message_id = MessageId::from_usize(id);
+                let message_id = EthMessageId::from_usize(id);
                 match message_id {
                     None => {
                         debug!("Unknown message");
                     }
-                    Some(MessageId::Status) => {
+                    Some(EthMessageId::Status) => {
                         let v = rlp::decode::<StatusMessage>(&data).map_err(|e| {
                             debug!("Failed to decode status message: {}! Kicking peer.", e);
 
@@ -205,194 +207,34 @@ impl<C: Control, DP: DataProvider, TxPool: Txpool> CapabilityServerImpl<C, DP, T
                             valid_peers.insert(peer);
                         }
                     }
-                    Some(MessageId::GetBlockHeaders) if valid_peer => {
-                        let selector = rlp::decode::<GetBlockHeaders>(&*data)
-                            .map_err(|_| DisconnectReason::ProtocolBreach)?;
-                        debug!("Requested headers: {:?}", selector);
+                    Some(inbound_id) if valid_peer => {
+                        if let Some(sender) = match inbound_id {
+                            EthMessageId::BlockBodies
+                            | EthMessageId::BlockHeaders
+                            | EthMessageId::NodeData => Some(&self.data_sender),
+                            EthMessageId::GetBlockBodies
+                            | EthMessageId::GetBlockHeaders
+                            | EthMessageId::GetNodeData => Some(&self.upload_requests_sender),
+                            // EthMessageId::Transactions
+                            // | EthMessageId::NewPooledTransactionHashes
+                            // | EthMessageId::GetPooledTransactions
+                            // | EthMessageId::PooledTransactions => Some(&self.tx_message_sender),
+                            _ => None,
+                        } {
+                            if sender
+                                .send(InboundMessage {
+                                    id: sentry::MessageId::try_from(inbound_id).unwrap() as i32,
+                                    data,
+                                    peer_id: peer.to_fixed_bytes().to_vec().into(),
+                                })
+                                .is_err()
+                            {
+                                trace!("no connected sentry, dropping status and peer");
+                                *self.status_message.write() = None;
 
-                        let selector = async {
-                            let anchor = match selector.block {
-                                BlockId::Number(num) => num,
-                                BlockId::Hash(hash) => {
-                                    match self.data_provider.resolve_block_height(hash).await {
-                                        Ok(Some(height)) => height,
-                                        Ok(None) => {
-                                            // this block does not exist, exit early.
-                                            return vec![];
-                                        }
-                                        Err(e) => {
-                                            debug!("Failed to resolve block {}: {}", hash, e);
-                                            return vec![];
-                                        }
-                                    }
-                                }
-                            };
-
-                            std::iter::empty()
-                                .chain((0..selector.max_headers).map(|i| {
-                                    let skip = selector.skip + 1;
-                                    if selector.reverse {
-                                        anchor - skip * i
-                                    } else {
-                                        anchor + skip * i
-                                    }
-                                }))
-                                .collect()
-                        }
-                        .await;
-
-                        let mut block_headers = self.data_provider.get_block_headers(
-                            selector.iter().copied().map(BlockId::Number).collect(),
-                        );
-
-                        let mut output = Vec::with_capacity(selector.len());
-                        while let Some(res) = block_headers.next().await {
-                            match res {
-                                Ok(v) => output.push(v),
-                                Err(e) => {
-                                    debug!(
-                                        "Failed to get block header: {}, stopping header query",
-                                        e
-                                    );
-                                    break;
-                                }
+                                return Err(DisconnectReason::ClientQuitting);
                             }
                         }
-
-                        let id = MessageId::BlockHeaders;
-                        debug!("Replying: {:?} / {} headers", id, output.len());
-
-                        return Ok(Some(Message {
-                            id: id.to_usize().unwrap(),
-                            data: rlp::encode_list(&output).into(),
-                        }));
-                    }
-                    Some(MessageId::GetBlockBodies) if valid_peer => {
-                        let blocks = Rlp::new(&*data)
-                            .as_list()
-                            .map_err(|_| DisconnectReason::ProtocolBreach)?;
-                        debug!("Requested {} block bodies", blocks.len());
-
-                        let output: Vec<_> = self
-                            .data_provider
-                            .get_block_bodies(blocks)
-                            .filter_map(|res| match res {
-                                Err(e) => {
-                                    debug!("{:?}", e);
-                                    None
-                                }
-                                Ok(v) => Some(v),
-                            })
-                            .collect::<Vec<_>>()
-                            .await;
-
-                        let id = MessageId::BlockBodies;
-                        debug!("Replying: {:?} / {} block bodies", id, output.len());
-
-                        return Ok(Some(Message {
-                            id: id.to_usize().unwrap(),
-                            data: rlp::encode_list(&output).into(),
-                        }));
-                    }
-                    Some(MessageId::BlockHeaders)
-                    | Some(MessageId::BlockBodies)
-                    | Some(MessageId::NewBlock)
-                    | Some(MessageId::NewBlockHashes)
-                        if valid_peer =>
-                    {
-                        let _ = self
-                            .control
-                            .forward_inbound_message(InboundMessage {
-                                id: InboundMessageId::try_from(message_id.unwrap()).unwrap() as i32,
-                                data: data.to_vec(),
-                                peer_id: peer.as_fixed_bytes().to_vec(),
-                            })
-                            .await;
-                    }
-                    Some(MessageId::NewPooledTransactionHashes) if valid_peer => {
-                        debug!("NewPooledTransactionHashes");
-                        let hashes = Rlp::new(&*data)
-                            .as_list::<H256>()
-                            .map_err(|_| DisconnectReason::ProtocolBreach)?;
-
-                        let rsp = self.txpool.find_unknown_transactions(&hashes).await;
-                        let mut txs = match rsp {
-                            Ok(t) => t,
-                            Err(e) => {
-                                warn!("Finding unknown transactions failed: {}", e);
-                                return Ok(None);
-                            }
-                        };
-
-                        txs.truncate(256); // TODO: Send multiple messages to get all txs.
-
-                        let txs: Vec<_> =
-                            txs.into_iter().map(|tx| tx.as_bytes().to_vec()).collect();
-
-                        let reply = Message {
-                            id: MessageId::GetPooledTransactions as usize,
-                            data: rlp::encode_list::<Vec<u8>, _>(&txs).into(),
-                        };
-
-                        return Ok(Some(reply));
-                    }
-                    Some(MessageId::PooledTransactions) if valid_peer => {
-                        debug!("PooledTransactions");
-                        let txs = Rlp::new(&*data)
-                            .iter()
-                            .map(|r| r.as_raw().to_vec())
-                            .collect();
-
-                        let results = match self.txpool.import_transactions(txs).await {
-                            Err(e) => {
-                                warn!("Importing transactions failed: {}", e);
-                                return Ok(None);
-                            }
-                            Ok(r) => r,
-                        };
-
-                        let mut success = 0;
-                        let mut exists = 0;
-                        let mut fee = 0;
-                        let mut stale = 0;
-                        let mut invalid = 0;
-                        let mut error = 0;
-
-                        for result in results {
-                            match result {
-                                ImportResult::Success => success += 1,
-                                ImportResult::AlreadyExists => exists += 1,
-                                ImportResult::FeeTooLow => fee += 1,
-                                ImportResult::Stale => stale += 1,
-                                ImportResult::Invalid => invalid += 1,
-                                ImportResult::InternalError => error += 1,
-                            }
-                        }
-
-                        info!(
-                            "Imported transactions: success={} exists={} fee={} stale={} invalid={} error={}",
-                            success,
-                            exists,
-                            fee,
-                            stale,
-                            invalid,
-                            error,
-                        );
-                    }
-                    Some(MessageId::GetPooledTransactions) if valid_peer => {
-                        let mut out = Bytes::from_static(&rlp::EMPTY_LIST_RLP);
-                        let hashes = Rlp::new(&*data)
-                            .as_list::<H256>()
-                            .map_err(|_| DisconnectReason::ProtocolBreach)?;
-
-                        if let Ok(rsp) = self.txpool.get_transactions(&hashes).await {
-                            out = rlp::encode_list::<Vec<u8>, _>(&rsp).into();
-                        }
-
-                        return Ok(Some(Message {
-                            id: MessageId::PooledTransactions.to_usize().unwrap(),
-                            data: out,
-                        }));
                     }
                     _ => {}
                 }
@@ -404,12 +246,7 @@ impl<C: Control, DP: DataProvider, TxPool: Txpool> CapabilityServerImpl<C, DP, T
 }
 
 #[async_trait]
-impl<C, DP, TxPool> CapabilityServer for CapabilityServerImpl<C, DP, TxPool>
-where
-    C: Control,
-    DP: DataProvider,
-    TxPool: Txpool,
-{
+impl CapabilityServer for CapabilityServerImpl {
     #[instrument(skip(self, peer), level = "debug", fields(peer=&*peer.to_string()))]
     fn on_peer_connect(&self, peer: PeerId, caps: HashMap<CapabilityName, CapabilityVersion>) {
         let first_events = if let Some((status_data, fork_filter)) = &*self.status_message.read() {
@@ -427,7 +264,7 @@ where
             vec![OutboundEvent::Message {
                 capability_name: capability_name(),
                 message: Message {
-                    id: MessageId::Status.to_usize().unwrap(),
+                    id: EthMessageId::Status.to_usize().unwrap(),
                     data: rlp::encode(&status_message).into(),
                 },
             }]
@@ -612,98 +449,19 @@ async fn main() -> anyhow::Result<()> {
 
     let tasks = Arc::new(TaskGroup::new());
 
-    let data_provider: Arc<dyn DataProvider> = match opts.data_provider {
-        DataProviderSettings::Dummy => Arc::new(DummyDataProvider),
-        DataProviderSettings::Tarpc { addr } => {
-            let addr = addr.to_string();
-            info!("Using tarpc data provider at {}", addr);
-            Arc::new(
-                TarpcDataProvider::new(addr)
-                    .await
-                    .context("Failed to start tarpc data provider")?,
-            )
-        }
-    };
-    let control: Arc<dyn Control> = if let Some(addr) = opts.control_addr {
-        Arc::new(GrpcControl::connect(addr.to_string()).await?)
-    } else {
-        Arc::new(DummyControl)
-    };
-
-    let txpool: Arc<dyn Txpool> = match opts.txpool_addr {
-        Some(addr) => Arc::new(GrpcTxpool::connect(addr.to_string()).await?),
-        None => Arc::new(DummyTxpool),
-    };
-
     let status_message: Arc<RwLock<Option<(StatusData, ForkFilter)>>> = Default::default();
 
-    tasks.spawn_with_name("Status updater", {
-        let status_message = status_message.clone();
-        let control = control.clone();
-        let data_provider = data_provider.clone();
-        async move {
-            loop {
-                match async {
-                    let status_data = match control.get_status_data().await {
-                        Err(e) => {
-                            debug!(
-                                "Failed to get status from control, trying from data provider: {}",
-                                e
-                            );
-                            match data_provider.get_status_data().await {
-                                Err(e) => {
-                                    debug!("Failed to fetch status from data provider: {}", e);
-                                    return Err(e);
-                                }
-                                Ok(v) => v,
-                            }
-                        }
-                        Ok(v) => v,
-                    };
-
-                    debug!("Resolving best hash");
-                    let best_block = data_provider
-                        .resolve_block_height(status_data.best_hash)
-                        .await
-                        .context("failed to resolve best hash")?
-                        .ok_or_else(|| anyhow!("invalid best hash"))?;
-
-                    let fork_filter = ForkFilter::new(
-                        best_block,
-                        status_data.fork_data.genesis,
-                        status_data.fork_data.forks.iter().copied(),
-                    );
-
-                    Ok((status_data, fork_filter))
-                }
-                .await
-                {
-                    Ok(s) => {
-                        debug!("Setting status data to {:?}", s);
-                        *status_message.write() = Some(s);
-                    }
-                    Err(e) => {
-                        warn!(
-                            "Failed to fetch status data: {}. Server will not accept new peers.",
-                            e
-                        );
-                        *status_message.write() = None;
-                    }
-                }
-
-                sleep(Duration::from_secs(5)).await;
-            }
-        }
-    });
-
+    let data_sender = broadcast(1).0;
+    let upload_requests_sender = broadcast(1).0;
+    let tx_message_sender = broadcast(1).0;
     let capability_server = Arc::new(CapabilityServerImpl {
         peer_pipes: Default::default(),
         block_tracker: Default::default(),
         status_message,
         valid_peers: Default::default(),
-        control,
-        data_provider,
-        txpool,
+        data_sender,
+        upload_requests_sender,
+        tx_message_sender,
     });
 
     let swarm = Swarm::builder()
@@ -727,7 +485,6 @@ async fn main() -> anyhow::Result<()> {
     info!("RLPx node listening at {}", listen_addr);
 
     let sentry_addr = opts.sentry_addr.parse()?;
-
     tasks.spawn(async move {
         let svc = SentryServer::new(SentryService::new(capability_server));
 
