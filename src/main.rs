@@ -50,6 +50,8 @@ mod types;
 type OutboundSender = Sender<OutboundEvent>;
 type OutboundReceiver = Arc<AsyncMutex<BoxStream<'static, OutboundEvent>>>;
 
+pub const BUFFERING_FACTOR: usize = 5;
+
 #[derive(Clone)]
 struct Pipes {
     sender: OutboundSender,
@@ -451,9 +453,9 @@ async fn main() -> anyhow::Result<()> {
 
     let status_message: Arc<RwLock<Option<(StatusData, ForkFilter)>>> = Default::default();
 
-    let data_sender = broadcast(1).0;
-    let upload_requests_sender = broadcast(1).0;
-    let tx_message_sender = broadcast(1).0;
+    let data_sender = broadcast(opts.max_peers * BUFFERING_FACTOR).0;
+    let upload_requests_sender = broadcast(opts.max_peers * BUFFERING_FACTOR).0;
+    let tx_message_sender = broadcast(opts.max_peers * BUFFERING_FACTOR).0;
     let capability_server = Arc::new(CapabilityServerImpl {
         peer_pipes: Default::default(),
         block_tracker: Default::default(),
