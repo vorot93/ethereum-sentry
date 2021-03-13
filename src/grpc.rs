@@ -2,9 +2,7 @@ use crate::eth::EthMessageId;
 use anyhow::bail;
 use std::convert::TryFrom;
 
-pub mod sentry {
-    tonic::include_proto!("sentry");
-}
+pub use ethereum_interfaces::sentry;
 
 impl TryFrom<EthMessageId> for sentry::MessageId {
     type Error = anyhow::Error;

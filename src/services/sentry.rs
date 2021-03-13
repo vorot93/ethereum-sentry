@@ -7,13 +7,11 @@ use crate::{
 };
 use async_trait::async_trait;
 use devp2p::*;
-use ethereum_forkid::ForkFilter;
 use futures::{stream::FuturesUnordered, Stream};
 use num_traits::ToPrimitive;
 use std::{
     convert::{identity, TryFrom},
     pin::Pin,
-    str::FromStr,
     sync::Arc,
 };
 use tokio::sync::broadcast::Sender as BroadcastSender;
@@ -71,7 +69,7 @@ impl SentryService {
                     })
                     .collect::<FuturesUnordered<_>>()
                     .filter_map(identity)
-                    .map(|peer_id| peer_id.to_fixed_bytes().to_vec().into())
+                    .map(|peer_id| peer_id.into())
                     .collect::<Vec<_>>()
                     .await,
             };
@@ -97,9 +95,11 @@ impl Sentry for SentryService {
         &self,
         request: tonic::Request<crate::grpc::sentry::PenalizePeerRequest>,
     ) -> Result<Response<()>, tonic::Status> {
-        let peer = hex::encode(&request.into_inner().peer_id)
-            .parse::<PeerId>()
-            .map_err(|e| tonic::Status::invalid_argument(e.to_string()))?;
+        let peer = request
+            .into_inner()
+            .peer_id
+            .ok_or_else(|| tonic::Status::invalid_argument("no peer id"))?
+            .into();
         if let Some(sender) = self.capability_server.sender(peer) {
             let _ = sender
                 .send(OutboundEvent::Disconnect {
@@ -134,9 +134,9 @@ impl Sentry for SentryService {
     ) -> Result<Response<SentPeers>, tonic::Status> {
         let crate::grpc::sentry::SendMessageByIdRequest { peer_id, data } = request.into_inner();
 
-        let peer = hex::encode(&peer_id)
-            .parse::<PeerId>()
-            .map_err(|e| tonic::Status::invalid_argument(e.to_string()))?;
+        let peer = peer_id
+            .ok_or_else(|| tonic::Status::invalid_argument("no peer id"))?
+            .into();
 
         Ok(Response::new(
             self.send_by_predicate(data, |_| std::iter::once(peer))
@@ -180,11 +180,9 @@ impl Sentry for SentryService {
     ) -> Result<Response<()>, tonic::Status> {
         let PeerMinBlockRequest { peer_id, min_block } = request.into_inner();
 
-        let peer = hex::encode(peer_id)
-            .parse()
-            .map_err(|e: <PeerId as FromStr>::Err| {
-                tonic::Status::invalid_argument(e.to_string())
-            })?;
+        let peer = peer_id
+            .ok_or_else(|| tonic::Status::invalid_argument("no peer id"))?
+            .into();
 
         self.capability_server
             .block_tracker
@@ -198,7 +196,7 @@ impl Sentry for SentryService {
         &self,
         request: tonic::Request<crate::grpc::sentry::StatusData>,
     ) -> Result<Response<()>, tonic::Status> {
-        let s = <(StatusData, ForkFilter)>::try_from(request.into_inner())
+        let s = FullStatusData::try_from(request.into_inner())
             .map_err(|e| tonic::Status::invalid_argument(e.to_string()))?;
 
         *self.capability_server.status_message.write() = Some(s);

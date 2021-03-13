@@ -12,7 +12,6 @@ use async_trait::async_trait;
 use clap::Clap;
 use devp2p::*;
 use educe::Educe;
-use ethereum_forkid::ForkFilter;
 use futures::stream::BoxStream;
 use grpc::sentry;
 use maplit::btreemap;
@@ -118,7 +117,7 @@ pub struct CapabilityServerImpl {
     peer_pipes: Arc<RwLock<HashMap<PeerId, Pipes>>>,
     block_tracker: Arc<RwLock<BlockTracker>>,
 
-    status_message: Arc<RwLock<Option<(StatusData, ForkFilter)>>>,
+    status_message: Arc<RwLock<Option<FullStatusData>>>,
     valid_peers: Arc<RwLock<HashSet<PeerId>>>,
 
     data_sender: BroadcastSender<InboundMessage>,
@@ -199,7 +198,7 @@ impl CapabilityServerImpl {
 
                         let status_data = self.status_message.read();
                         let mut valid_peers = self.valid_peers.write();
-                        if let Some((_, fork_filter)) = &*status_data {
+                        if let Some(FullStatusData { fork_filter, .. }) = &*status_data {
                             fork_filter.validate(v.fork_id).map_err(|reason| {
                                 debug!("Kicking peer with incompatible fork ID: {:?}", reason);
 
@@ -227,7 +226,7 @@ impl CapabilityServerImpl {
                                 .send(InboundMessage {
                                     id: sentry::MessageId::try_from(inbound_id).unwrap() as i32,
                                     data,
-                                    peer_id: peer.to_fixed_bytes().to_vec().into(),
+                                    peer_id: Some(peer.into()),
                                 })
                                 .is_err()
                             {
@@ -251,15 +250,19 @@ impl CapabilityServerImpl {
 impl CapabilityServer for CapabilityServerImpl {
     #[instrument(skip(self, peer), level = "debug", fields(peer=&*peer.to_string()))]
     fn on_peer_connect(&self, peer: PeerId, caps: HashMap<CapabilityName, CapabilityVersion>) {
-        let first_events = if let Some((status_data, fork_filter)) = &*self.status_message.read() {
+        let first_events = if let Some(FullStatusData {
+            status,
+            fork_filter,
+        }) = &*self.status_message.read()
+        {
             let status_message = StatusMessage {
                 protocol_version: *caps
                     .get(&capability_name())
                     .expect("peer without this cap would have been disconnected"),
-                network_id: status_data.network_id,
-                total_difficulty: status_data.total_difficulty,
-                best_hash: status_data.best_hash,
-                genesis_hash: status_data.fork_data.genesis,
+                network_id: status.network_id,
+                total_difficulty: status.total_difficulty,
+                best_hash: status.best_hash,
+                genesis_hash: status.fork_data.genesis,
                 fork_id: fork_filter.current(),
             };
 
@@ -451,15 +454,13 @@ async fn main() -> anyhow::Result<()> {
 
     let tasks = Arc::new(TaskGroup::new());
 
-    let status_message: Arc<RwLock<Option<(StatusData, ForkFilter)>>> = Default::default();
-
     let data_sender = broadcast(opts.max_peers * BUFFERING_FACTOR).0;
     let upload_requests_sender = broadcast(opts.max_peers * BUFFERING_FACTOR).0;
     let tx_message_sender = broadcast(opts.max_peers * BUFFERING_FACTOR).0;
     let capability_server = Arc::new(CapabilityServerImpl {
         peer_pipes: Default::default(),
         block_tracker: Default::default(),
-        status_message,
+        status_message: Default::default(),
         valid_peers: Default::default(),
         data_sender,
         upload_requests_sender,

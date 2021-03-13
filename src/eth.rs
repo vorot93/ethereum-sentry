@@ -36,7 +36,13 @@ pub struct StatusData {
     pub fork_data: Forks,
 }
 
-impl TryFrom<crate::grpc::sentry::StatusData> for (StatusData, ForkFilter) {
+#[derive(Clone, Debug)]
+pub struct FullStatusData {
+    pub status: StatusData,
+    pub fork_filter: ForkFilter,
+}
+
+impl TryFrom<crate::grpc::sentry::StatusData> for FullStatusData {
     type Error = anyhow::Error;
 
     fn try_from(value: crate::grpc::sentry::StatusData) -> Result<Self, Self::Error> {
@@ -48,21 +54,28 @@ impl TryFrom<crate::grpc::sentry::StatusData> for (StatusData, ForkFilter) {
         } = value;
 
         let fork_data = fork_data.ok_or_else(|| anyhow!("no fork data"))?;
-
-        let genesis = hex::encode(fork_data.genesis).parse()?;
+        let genesis = fork_data
+            .genesis
+            .ok_or_else(|| anyhow!("no genesis"))?
+            .into();
 
         let fork_filter = ForkFilter::new(0, genesis, fork_data.forks.clone());
         let status = StatusData {
             network_id,
-            total_difficulty: hex::encode(total_difficulty).parse()?,
-            best_hash: hex::encode(best_hash).parse()?,
+            total_difficulty: total_difficulty
+                .ok_or_else(|| anyhow!("no total difficulty"))?
+                .into(),
+            best_hash: best_hash.ok_or_else(|| anyhow!("no best hash"))?.into(),
             fork_data: Forks {
                 genesis,
                 forks: fork_data.forks.into_iter().collect(),
             },
         };
 
-        Ok((status, fork_filter))
+        Ok(Self {
+            status,
+            fork_filter,
+        })
     }
 }
 
