@@ -25,13 +25,12 @@ cidr = "0.1"
 derive_more = "0.99"
 digest = "0.9"
 discv4 = { path = "../discv4", optional = true }
-discv5 = { git = "https://github.com/vorot93/discv5", branch = "dev", optional = true }
+discv5 = { git = "https://github.com/sigp/discv5", optional = true }
 dnsdisc = { path = "../dnsdisc", default-features = false, optional = true }
 educe = { version = "0.4", default-features = false, features = ["Clone", "Debug", "Default"] }
-enr = { git = "https://github.com/rust-ethereum/enr", default-features = false, features = ["rust-secp256k1"] }
+enr = { version = "0.5", default-features = false, features = ["rust-secp256k1"] }
 enum-primitive-derive = "0.2"
-ethereum-types = { version = "0.11", default-features = false, features = ["std", "rlp"] }
-funty = "<1.2"
+ethereum-types = "0.11"
 futures = "0.3"
 futures-intrusive = "0.4"
 generic-array = "0.14"

@@ -51,6 +51,7 @@ impl TryFrom<crate::grpc::sentry::StatusData> for FullStatusData {
             total_difficulty,
             best_hash,
             fork_data,
+            max_block,
         } = value;
 
         let fork_data = fork_data.ok_or_else(|| anyhow!("no fork data"))?;
@@ -59,7 +60,7 @@ impl TryFrom<crate::grpc::sentry::StatusData> for FullStatusData {
             .ok_or_else(|| anyhow!("no genesis"))?
             .into();
 
-        let fork_filter = ForkFilter::new(0, genesis, fork_data.forks.clone());
+        let fork_filter = ForkFilter::new(max_block, genesis, fork_data.forks.clone());
         let status = StatusData {
             network_id,
             total_difficulty: total_difficulty

@@ -557,7 +557,7 @@ mod tests {
             .collect::<Result<Vec<_>, _>>()
             .await
             .unwrap_err();
-        if !err.chain().any(std::error::Error::is::<InvalidEnr>) {
+        if !err.chain().any(|e| e.is::<InvalidEnr>()) {
             unreachable!("should have seen the correct error")
         }
     }

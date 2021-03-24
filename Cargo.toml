@@ -19,16 +19,15 @@ clap = "3.0.0-beta.2"
 derive_more = "0.99"
 devp2p = { path = "devp2p", features = ["discv4", "discv5", "dnsdisc"] }
 discv4 = { path = "discv4" }
-discv5 = { git = "https://github.com/vorot93/discv5", branch = "dev" }
+discv5 = { git = "https://github.com/sigp/discv5" }
 dnsdisc = { path = "dnsdisc", features = ["trust-dns"] }
 educe = { version = "0.4", features = ["Debug", "Default"] }
-enr = { git = "https://github.com/rust-ethereum/enr", default-features = false, features = ["rust-secp256k1"] }
+enr = { version = "0.5", default-features = false, features = ["rust-secp256k1"] }
 enum-primitive-derive = "0.2"
 ethereum = { version = "0.7", default-features = false }
 ethereum-forkid = "0.5"
-ethereum-interfaces = { git = "https://github.com/rust-ethereum/interfaces", default-features = false, features = ["sentry"] }
-ethereum-tarpc-api = { git = "https://github.com/rust-ethereum/tarpc-api" }
-ethereum-types = { version = "0.11", default-features = false }
+ethereum-interfaces = { git = "https://github.com/ledgerwatch/interfaces", branch = "vorot93/rust", default-features = false, features = ["sentry"] }
+ethereum-types = "0.11"
 futures = "0.3"
 hex = "0.4"
 hex-literal = "0.3"
@@ -46,7 +45,6 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_with = "1"
 stubborn-io = "0.3"
-tarpc = { version = "0.24", features = ["full"] }
 task-group = { git = "https://github.com/vorot93/task-group" }
 tokio = { version = "1", features = ["full"] }
 tokio-serde = { version = "0.8", features = ["bincode"] }
