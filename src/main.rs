@@ -332,7 +332,16 @@ impl CapabilityServer for CapabilityServerImpl {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env())
+        .with_env_filter(
+            if std::env::var(EnvFilter::DEFAULT_ENV)
+                .unwrap_or_default()
+                .is_empty()
+            {
+                EnvFilter::new("info")
+            } else {
+                EnvFilter::from_default_env()
+            },
+        )
         .init();
 
     let opts =
@@ -367,10 +376,10 @@ async fn main() -> anyhow::Result<()> {
 
     if let Some(dnsdisc_opts) = opts.dnsdisc {
         info!("Starting DNS discovery fetch from {}", dnsdisc_opts.address);
-        let dns_resolver = dnsdisc::Resolver::new(Arc::new(TokioAsyncResolver::tokio(
-            ResolverConfig::default(),
-            ResolverOpts::default(),
-        )?));
+        let dns_resolver = dnsdisc::Resolver::new(Arc::new(
+            TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default())
+                .context("Failed to start DNS resolver")?,
+        ));
 
         discovery_tasks.insert(
             "dnsdisc".to_string(),
@@ -483,7 +492,8 @@ async fn main() -> anyhow::Result<()> {
             capability_server.clone(),
             secret_key,
         )
-        .await?;
+        .await
+        .context("Failed to start RLPx node")?;
 
     info!("RLPx node listening at {}", listen_addr);
 

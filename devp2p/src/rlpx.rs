@@ -1,7 +1,7 @@
 //! RLPx protocol implementation in Rust
 
 use crate::{disc::Discovery, node_filter::*, peer::*, transport::Transport, types::*};
-use anyhow::{anyhow, bail};
+use anyhow::{anyhow, bail, Context};
 use cidr::{Cidr, IpCidr};
 use educe::Educe;
 use futures::sink::SinkExt;
@@ -594,7 +594,9 @@ impl<C: CapabilityServer> Swarm<C> {
         let capabilities = Arc::new(capabilities);
 
         if let Some(options) = &listen_options {
-            let tcp_incoming = TcpListener::bind(options.addr).await?;
+            let tcp_incoming = TcpListener::bind(options.addr)
+                .await
+                .context("Failed to bind RLPx node to socket")?;
             let cidr = options.cidr.clone();
             tasks.spawn_with_name(
                 "incoming handler",
