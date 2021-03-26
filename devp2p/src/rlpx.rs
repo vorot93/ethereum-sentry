@@ -704,8 +704,7 @@ impl<C: CapabilityServer> Swarm<C> {
         let streams = self.streams.clone();
         let node_filter = self.node_filter.clone();
 
-        let capabilities = self.capabilities.clone();
-        let capability_set = capabilities.get_capabilities().to_vec();
+        let capability_set = self.capabilities.get_capabilities().to_vec();
         let capability_server = self.capability_server.clone();
 
         let secret_key = self.secret_key;

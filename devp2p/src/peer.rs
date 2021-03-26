@@ -495,11 +495,11 @@ where
             }
             PeerMessage::Ping => {
                 debug!("sending ping message");
-                (0x02, rlp::EMPTY_LIST_RLP.to_vec().into())
+                (0x02, Bytes::from_static(&rlp::EMPTY_LIST_RLP))
             }
             PeerMessage::Pong => {
                 debug!("sending pong message");
-                (0x03, rlp::EMPTY_LIST_RLP.to_vec().into())
+                (0x03, Bytes::from_static(&rlp::EMPTY_LIST_RLP))
             }
             PeerMessage::Subprotocol(SubprotocolMessage { cap_name, message }) => {
                 let Message { id, data } = message;
