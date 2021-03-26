@@ -52,7 +52,6 @@ pub enum DisconnectReason {
 /// RLPx protocol version.
 #[derive(Copy, Clone, Debug, Primitive)]
 pub enum ProtocolVersion {
-    V4 = 4,
     V5 = 5,
 }
 
@@ -117,6 +116,15 @@ struct Snappy {
     decoder: snap::raw::Decoder,
 }
 
+impl Default for Snappy {
+    fn default() -> Self {
+        Self {
+            encoder: snap::raw::Encoder::new(),
+            decoder: snap::raw::Decoder::new(),
+        }
+    }
+}
+
 /// RLPx transport peer stream
 #[allow(unused)]
 #[derive(Debug)]
@@ -128,7 +136,7 @@ pub struct PeerStream<Io> {
     id: PeerId,
     remote_id: PeerId,
 
-    snappy: Option<Snappy>,
+    snappy: Snappy,
 
     disconnected: bool,
 }
@@ -149,22 +157,13 @@ where
 
     /// Connect to a peer over TCP
     #[instrument(
-        skip(
-            transport,
-            secret_key,
-            protocol_version,
-            client_version,
-            capabilities,
-            port,
-            remote_id
-        ),
+        skip(transport, secret_key, client_version, capabilities, port, remote_id),
         fields()
     )]
     pub async fn connect(
         transport: Io,
         secret_key: SecretKey,
         remote_id: PeerId,
-        protocol_version: ProtocolVersion,
         client_version: String,
         capabilities: Vec<CapabilityInfo>,
         port: u16,
@@ -172,7 +171,6 @@ where
         Ok(Self::new(
             ECIESStream::connect(transport, secret_key, remote_id).await?,
             secret_key,
-            protocol_version,
             client_version,
             capabilities,
             port,
@@ -182,20 +180,12 @@ where
 
     /// Incoming peer stream over TCP
     #[instrument(
-        skip(
-            transport,
-            secret_key,
-            protocol_version,
-            client_version,
-            capabilities,
-            port
-        ),
+        skip(transport, secret_key, client_version, capabilities, port),
         fields()
     )]
     pub async fn incoming(
         transport: Io,
         secret_key: SecretKey,
-        protocol_version: ProtocolVersion,
         client_version: String,
         capabilities: Vec<CapabilityInfo>,
         port: u16,
@@ -203,7 +193,6 @@ where
         Ok(Self::new(
             ECIESStream::incoming(transport, secret_key).await?,
             secret_key,
-            protocol_version,
             client_version,
             capabilities,
             port,
@@ -212,11 +201,10 @@ where
     }
 
     /// Create a new peer stream
-    #[instrument(skip(transport, secret_key, protocol_version, client_version, capabilities, port), fields(id=&*transport.remote_id().to_string()))]
+    #[instrument(skip(transport, secret_key, client_version, capabilities, port), fields(id=&*transport.remote_id().to_string()))]
     pub async fn new(
         mut transport: ECIESStream<Io>,
         secret_key: SecretKey,
-        protocol_version: ProtocolVersion,
         client_version: String,
         capabilities: Vec<CapabilityInfo>,
         port: u16,
@@ -231,7 +219,7 @@ where
         let hello = HelloMessage {
             port,
             id,
-            protocol_version: protocol_version.to_usize().unwrap(),
+            protocol_version: ProtocolVersion::V5.to_usize().unwrap(),
             client_version,
             capabilities: {
                 let mut caps = Vec::new();
@@ -324,14 +312,6 @@ where
 
         let no_shared_caps = shared_capabilities.is_empty();
 
-        let snappy = match protocol_version {
-            ProtocolVersion::V4 => None,
-            ProtocolVersion::V5 => Some(Snappy {
-                encoder: snap::raw::Encoder::new(),
-                decoder: snap::raw::Decoder::new(),
-            }),
-        };
-
         let mut this = Self {
             remote_id: transport.remote_id(),
             stream: transport,
@@ -339,7 +319,7 @@ where
             port,
             id,
             shared_capabilities,
-            snappy,
+            snappy: Snappy::default(),
             disconnected: false,
         };
 
@@ -392,30 +372,25 @@ where
 
                 let (cap, id, data) = match message_id {
                     Ok(message_id) => {
-                        let data = if let Some(snappy) = &mut s.snappy {
-                            let input = &val[1..];
-                            let payload_len = snap::raw::decompress_len(input)?;
-                            if payload_len > MAX_PAYLOAD_SIZE {
-                                return Poll::Ready(Some(Err(io::Error::new(
-                                    io::ErrorKind::InvalidInput,
-                                    format!(
-                                        "payload size ({}) exceeds limit ({} bytes)",
-                                        payload_len, MAX_PAYLOAD_SIZE
-                                    ),
-                                ))));
-                            }
-                            let v = snappy.decoder.decompress_vec(input)?.into();
-                            trace!("Decompressed raw message data: {}", hex::encode(&v));
-                            v
-                        } else {
-                            Bytes::copy_from_slice(&val[1..])
-                        };
+                        let input = &val[1..];
+                        let payload_len = snap::raw::decompress_len(input)?;
+                        if payload_len > MAX_PAYLOAD_SIZE {
+                            return Poll::Ready(Some(Err(io::Error::new(
+                                io::ErrorKind::InvalidInput,
+                                format!(
+                                    "payload size ({}) exceeds limit ({} bytes)",
+                                    payload_len, MAX_PAYLOAD_SIZE
+                                ),
+                            ))));
+                        }
+                        let data = Bytes::from(s.snappy.decoder.decompress_vec(input)?);
+                        trace!("Decompressed raw message data: {}", hex::encode(&data));
 
                         if message_id < 0x10 {
                             match message_id {
                                 0x01 => {
                                     s.disconnected = true;
-                                    if let Some(reason) = Rlp::new(&*data)
+                                    if let Some(reason) = Rlp::new(&data)
                                         .val_at::<u8>(0)
                                         .ok()
                                         .and_then(DisconnectReason::from_u8)
@@ -573,17 +548,13 @@ where
         s.append(&message_id);
         let mut msg = s.out();
 
-        if let Some(snappy) = &mut this.snappy {
-            let mut buf = msg.split_off(msg.len());
-            buf.resize(snap::raw::max_compress_len(payload.len()), 0);
+        let mut buf = msg.split_off(msg.len());
+        buf.resize(snap::raw::max_compress_len(payload.len()), 0);
 
-            let compressed_len = snappy.encoder.compress(&*payload, &mut buf).unwrap();
-            buf.truncate(compressed_len);
+        let compressed_len = this.snappy.encoder.compress(&*payload, &mut buf).unwrap();
+        buf.truncate(compressed_len);
 
-            msg.unsplit(buf);
-        } else {
-            msg.extend_from_slice(&*payload)
-        }
+        msg.unsplit(buf);
 
         Pin::new(&mut this.stream).start_send(msg.freeze())?;
 

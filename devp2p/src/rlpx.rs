@@ -94,7 +94,6 @@ impl Default for PeerStreams {
 #[educe(Clone)]
 struct PeerStreamHandshakeData<C> {
     port: u16,
-    protocol_version: ProtocolVersion,
     secret_key: SecretKey,
     client_version: String,
     capabilities: Arc<CapabilitySet>,
@@ -366,7 +365,6 @@ async fn handle_incoming_request<C, Io>(
 {
     let PeerStreamHandshakeData {
         secret_key,
-        protocol_version,
         client_version,
         capabilities,
         capability_server,
@@ -378,7 +376,6 @@ async fn handle_incoming_request<C, Io>(
         PeerStream::incoming(
             stream,
             secret_key,
-            protocol_version,
             client_version,
             capabilities.get_capabilities().to_vec(),
             port,
@@ -489,7 +486,6 @@ pub struct Swarm<C: CapabilityServer> {
 
     #[educe(Debug(ignore))]
     secret_key: SecretKey,
-    protocol_version: ProtocolVersion,
     client_version: String,
     port: u16,
 }
@@ -578,8 +574,6 @@ impl<C: CapabilityServer> Swarm<C> {
     ) -> anyhow::Result<Arc<Self>> {
         let tasks = task_group.unwrap_or_default();
 
-        let protocol_version = ProtocolVersion::V5;
-
         let port = listen_options
             .as_ref()
             .map_or(0, |options| options.addr.port());
@@ -608,7 +602,6 @@ impl<C: CapabilityServer> Swarm<C> {
                     cidr,
                     PeerStreamHandshakeData {
                         port,
-                        protocol_version,
                         secret_key,
                         client_version: client_version.clone(),
                         capabilities: capabilities.clone(),
@@ -626,7 +619,6 @@ impl<C: CapabilityServer> Swarm<C> {
             capabilities,
             capability_server,
             secret_key,
-            protocol_version,
             client_version,
             port,
         });
@@ -717,7 +709,6 @@ impl<C: CapabilityServer> Swarm<C> {
         let capability_server = self.capability_server.clone();
 
         let secret_key = self.secret_key;
-        let protocol_version = self.protocol_version;
         let client_version = self.client_version.clone();
         let port = self.port;
 
@@ -796,7 +787,6 @@ impl<C: CapabilityServer> Swarm<C> {
                     transport,
                     secret_key,
                     remote_id,
-                    protocol_version,
                     client_version,
                     capability_set,
                     port,
