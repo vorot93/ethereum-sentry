@@ -593,7 +593,7 @@ impl<C: CapabilityServer> Swarm<C> {
         let node_filter = Arc::new(Mutex::new(MemoryNodeFilter::new(Arc::new(
             listen_options
                 .as_ref()
-                .map_or(0.into(), |options| options.max_peers.into()),
+                .map_or(usize::MAX.into(), |options| options.max_peers.into()),
         ))));
 
         let capabilities = Arc::new(capabilities);
