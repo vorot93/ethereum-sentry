@@ -173,6 +173,7 @@ where
     let (pings_tx, mut pings) = channel(1);
     let (pongs_tx, mut pongs) = channel(1);
 
+    // This will handle incoming packets from peer.
     tasks.spawn_with_name(format!("peer {} ingress router", remote_id), {
         let peer_disconnect_tx = peer_disconnect_tx.clone();
         let capability_server = capability_server.clone();
@@ -212,6 +213,7 @@ where
                                 let _ = pongs_tx.send(()).await;
                             }
                             Ok(PeerMessage::Pong) => {
+                                // Pong received, peer is off the hook
                                 pinged.store(false, Ordering::SeqCst);
                             }
                         }
@@ -231,16 +233,18 @@ where
         .instrument(span!(Level::DEBUG, "IN", "peer={}", remote_id.to_string(),))
     });
 
+    // This will send our packets to peer.
     tasks.spawn_with_name(
         format!("peer {} egress router & disconnector", remote_id),
         async move {
             let mut event_fut = capability_server.next(remote_id);
             loop {
                 let mut disconnecting = None;
-                let mut egress = None;
-                let mut trigger: Option<OneshotSender<()>> = None;
+
+                // Egress message and trigger to execute _after_ it is sent
+                let mut egress = Option::<(PeerMessage, Option<OneshotSender<()>>)>::None;
                 tokio::select! {
-                    // Event from capability server.
+                    // Handle event from capability server.
                     msg = &mut event_fut => {
                         // Invariant: CapabilityServer::next() will never be called after disconnect event
                         match msg {
@@ -248,14 +252,14 @@ where
                                 capability_name, message
                             } => {
                                 event_fut = capability_server.next(remote_id);
-                                egress = Some(PeerMessage::Subprotocol(SubprotocolMessage {
+                                egress = Some((PeerMessage::Subprotocol(SubprotocolMessage {
                                     cap_name: capability_name, message
-                                }));
+                                }), None));
                             }
                             OutboundEvent::Disconnect {
                                 reason
                             } => {
-                                egress = Some(PeerMessage::Disconnect(reason));
+                                egress = Some((PeerMessage::Disconnect(reason), None));
                                 disconnecting = Some(DisconnectSignal {
                                     initiator: DisconnectInitiator::Local, reason
                                 });
@@ -264,23 +268,22 @@ where
                     },
                     // We ping the peer.
                     Some(tx) = pings.recv() => {
-                        egress = Some(PeerMessage::Ping);
-                        trigger = Some(tx);
+                        egress = Some((PeerMessage::Ping, Some(tx)));
                     }
                     // Peer has pinged us.
                     Some(_) = pongs.recv() => {
-                        egress = Some(PeerMessage::Pong);
+                        egress = Some((PeerMessage::Pong, None));
                     }
                     // Ping timeout or signal from ingress router.
                     Some(DisconnectSignal { initiator, reason }) = peer_disconnect_rx.recv() => {
                         if let DisconnectInitiator::Local = initiator {
-                            egress = Some(PeerMessage::Disconnect(reason));
+                            egress = Some((PeerMessage::Disconnect(reason), None));
                         }
                         disconnecting = Some(DisconnectSignal { initiator, reason })
                     }
                 };
 
-                if let Some(message) = egress {
+                if let Some((message, trigger)) = egress {
                     trace!("Sending message: {:?}", message);
 
                     // Send egress message, force disconnect on error.
@@ -291,6 +294,8 @@ where
                             reason: DisconnectReason::TcpSubsystemError,
                         });
                     } else if let Some(trigger) = trigger {
+                        // Reason for signal in trigger:
+                        // We don't want to timeout peer if our TCP socket is too slow
                         let _ = trigger.send(());
                     }
                 }
@@ -314,7 +319,7 @@ where
 
             // We are done, drop the peer state.
             if let Some(streams) = streams.upgrade() {
-                // This is the last line that is guaranteed to be executed.
+                // This is the last line guaranteed to be executed.
                 // After this the peer's task group is dropped and any alive tasks are forcibly cancelled.
                 streams.lock().disconnect_peer(remote_id);
             }
@@ -327,6 +332,7 @@ where
         )),
     );
 
+    // This will ping the peer and disconnect if they don't respond.
     tasks.spawn_with_name(format!("peer {} pinger", remote_id), async move {
         loop {
             pinged.store(true, Ordering::SeqCst);
@@ -335,6 +341,7 @@ where
             if pings_tx.send(cb_tx).await.is_ok() && cb_rx.await.is_ok() {
                 sleep(PING_TIMEOUT).await;
 
+                // Timeout has passed, where's the pong? Disconnect.
                 if pinged.load(Ordering::SeqCst) {
                     let _ = peer_disconnect_tx.send(DisconnectSignal {
                         initiator: DisconnectInitiator::Local,
@@ -461,7 +468,7 @@ impl From<BTreeMap<CapabilityId, CapabilityLength>> for CapabilitySet {
 
 /// This is an asynchronous RLPx server implementation.
 ///
-/// `Swarm` is the representation of swarm of connected RLPx peers
+/// `Swarm` is the representation of swarm of connected RLPx peers that
 /// supports registration for capability servers.
 ///
 /// This implementation is based on the concept of structured concurrency.
@@ -794,9 +801,9 @@ impl<C: CapabilityServer> Swarm<C> {
             }
             .await;
 
-            let s = streams.clone();
-            let mut s = s.lock();
-            let PeerStreams { mapping } = &mut *s;
+            let streams = streams.clone();
+            let mut streams_guard = streams.lock();
+            let PeerStreams { mapping } = &mut *streams_guard;
 
             // Adopt the new connection if the peer has not been dropped or superseded by incoming connection.
             if let Entry::Occupied(mut peer_state) = mapping.entry(remote_id) {
