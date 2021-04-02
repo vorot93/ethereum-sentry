@@ -503,31 +503,26 @@ where
             }
             PeerMessage::Subprotocol(SubprotocolMessage { cap_name, message }) => {
                 let Message { id, data } = message;
-                let cap = this
+                let cap = *this
                     .shared_capabilities
                     .iter()
-                    .find(|cap| cap.name == cap_name);
-
-                if cap.is_none() {
-                    debug!(
-                        "giving up sending cap {} of id {} to 0x{:x} because remote does not support.",
-                        cap_name.0,
-                        id,
-                        this.remote_id()
-                    );
-                    return Ok(());
-                }
-
-                let cap = *cap.unwrap();
+                    .find(|cap| cap.name == cap_name)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "attempted to send payload of unsupported capability ({}/{}/{})",
+                            cap_name.0,
+                            id,
+                            this.remote_id(),
+                        )
+                    });
 
                 if id >= cap.length {
-                    debug!(
-                        "giving up sending cap {} of id {} to 0x{:x} because it is too big.",
+                    panic!(
+                        "attempted to send payload with message id too big ({}/{}/{})",
                         cap_name.0,
                         id,
                         this.remote_id()
                     );
-                    return Ok(());
                 }
 
                 let mut message_id = 0x10;

@@ -11,7 +11,7 @@ use std::{
 pub trait NodeFilter: Debug + Send + 'static {
     fn max_peers(&self) -> usize;
     fn is_banned(&self, id: PeerId) -> bool;
-    fn allow(&self, pool_size: usize, id: PeerId) -> bool {
+    fn is_allowed(&self, pool_size: usize, id: PeerId) -> bool {
         pool_size < self.max_peers() && !self.is_banned(id)
     }
     fn ban(&mut self, id: PeerId);

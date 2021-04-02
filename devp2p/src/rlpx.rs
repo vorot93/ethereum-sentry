@@ -212,7 +212,7 @@ where
                                 let _ = pongs_tx.send(()).await;
                             }
                             Ok(PeerMessage::Pong) => {
-                                pinged.store(false, Ordering::Relaxed);
+                                pinged.store(false, Ordering::SeqCst);
                             }
                         }
                     }
@@ -329,13 +329,13 @@ where
 
     tasks.spawn_with_name(format!("peer {} pinger", remote_id), async move {
         loop {
-            pinged.store(true, Ordering::Relaxed);
+            pinged.store(true, Ordering::SeqCst);
 
-            let (tx, rx) = oneshot();
-            if pings_tx.send(tx).await.is_ok() && rx.await.is_ok() {
+            let (cb_tx, cb_rx) = oneshot();
+            if pings_tx.send(cb_tx).await.is_ok() && cb_rx.await.is_ok() {
                 sleep(PING_TIMEOUT).await;
 
-                if pinged.load(Ordering::Relaxed) {
+                if pinged.load(Ordering::SeqCst) {
                     let _ = peer_disconnect_tx.send(DisconnectSignal {
                         initiator: DisconnectInitiator::Local,
                         reason: DisconnectReason::PingTimeout,
@@ -406,7 +406,7 @@ async fn handle_incoming_request<C, Io>(
                     );
                 }
                 Entry::Vacant(entry) => {
-                    if node_filter.lock().allow(total_connections, remote_id) {
+                    if node_filter.lock().is_allowed(total_connections, remote_id) {
                         debug!("New incoming peer connected: {}", remote_id);
                         entry.insert(PeerState::Connected(setup_peer_state(
                             Arc::downgrade(&streams),
@@ -763,7 +763,7 @@ impl<C: CapabilityServer> Swarm<C> {
                         );
                     }
                     Entry::Vacant(vacant) => {
-                        if check_peer && !node_filter.allow(connection_num, remote_id) {
+                        if check_peer && !node_filter.is_allowed(connection_num, remote_id) {
                             trace!("rejecting peer {}", remote_id);
                         } else {
                             debug!("connecting to peer {} at {}", remote_id, addr);

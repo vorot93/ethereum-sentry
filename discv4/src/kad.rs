@@ -72,11 +72,7 @@ impl Table {
     }
 
     fn bucket(&self, peer: NodeId) -> Option<&KBucket> {
-        if let Some(distance) = self.logdistance(peer) {
-            return Some(&self.kbuckets[distance]);
-        }
-
-        None
+        self.logdistance(peer).map(|dst| &self.kbuckets[dst])
     }
 
     fn bucket_mut(&mut self, peer: NodeId) -> Option<&mut KBucket> {
@@ -88,15 +84,14 @@ impl Table {
     }
 
     pub fn get(&self, peer: NodeId) -> Option<Endpoint> {
-        if let Some(bucket) = self.bucket(peer) {
-            for entry in &bucket.bucket {
-                if entry.id == peer {
-                    return Some((*entry).into());
-                }
-            }
-        }
-
-        None
+        self.bucket(peer).and_then(|bucket| {
+            bucket
+                .bucket
+                .iter()
+                .find(|entry| entry.id == peer)
+                .copied()
+                .map(From::from)
+        })
     }
 
     pub fn filled_buckets(&self) -> Vec<u8> {
@@ -114,13 +109,11 @@ impl Table {
     }
 
     pub fn oldest(&self, bucket_no: u8) -> Option<NodeRecord> {
-        let b = &self.kbuckets[bucket_no as usize];
-
-        if !b.bucket.is_empty() {
-            return Some(b.bucket[b.bucket.len() - 1]);
-        }
-
-        None
+        self.kbuckets[bucket_no as usize]
+            .bucket
+            .iter()
+            .next_back()
+            .copied()
     }
 
     /// Add verified node if there is space.
