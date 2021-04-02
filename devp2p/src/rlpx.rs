@@ -1,8 +1,14 @@
 //! RLPx protocol implementation in Rust
 
-use crate::{disc::Discovery, node_filter::*, peer::*, transport::Transport, types::*};
+use crate::{
+    disc::Discovery,
+    node_filter::{MemoryNodeFilter, NodeFilter},
+    peer::*,
+    transport::{TcpServer, TokioCidrListener, Transport},
+    types::*,
+};
 use anyhow::{anyhow, bail, Context};
-use cidr::{Cidr, IpCidr};
+use cidr::IpCidr;
 use educe::Educe;
 use futures::sink::SinkExt;
 use parking_lot::Mutex;
@@ -101,14 +107,14 @@ struct PeerStreamHandshakeData<C> {
     capability_server: Arc<C>,
 }
 
-async fn handle_incoming<C>(
+async fn handle_incoming<TS, C>(
     task_group: Weak<TaskGroup>,
     streams: Arc<Mutex<PeerStreams>>,
     node_filter: Arc<Mutex<dyn NodeFilter>>,
-    tcp_incoming: TcpListener,
-    cidr: Option<IpCidr>,
+    tcp_incoming: TS,
     handshake_data: PeerStreamHandshakeData<C>,
 ) where
+    TS: TcpServer,
     C: CapabilityServer,
 {
     let _: anyhow::Result<()> = async {
@@ -117,21 +123,12 @@ async fn handle_incoming<C>(
                 Err(e) => {
                     bail!("failed to accept peer: {:?}, shutting down", e);
                 }
-                Ok((stream, remote_addr)) => {
+                Ok(stream) => {
                     let tasks = task_group
                         .upgrade()
                         .ok_or_else(|| anyhow!("task group is down"))?;
 
-                    if let Some(cidr) = &cidr {
-                        if !cidr.contains(&remote_addr.ip()) {
-                            debug!(
-                                "Ignoring connection request: {} is not in range {}",
-                                remote_addr, cidr
-                            );
-
-                            continue;
-                        }
-                    }
+                    let task_name = format!("Incoming connection setup: {:?}", stream);
 
                     let f = handle_incoming_request(
                         streams.clone(),
@@ -139,7 +136,7 @@ async fn handle_incoming<C>(
                         stream,
                         handshake_data.clone(),
                     );
-                    tasks.spawn_with_name(format!("Incoming connection setup: {}", remote_addr), f);
+                    tasks.spawn_with_name(task_name, f);
                 }
             }
         }
@@ -603,23 +600,23 @@ impl<C: CapabilityServer> Swarm<C> {
                 .await
                 .context("Failed to bind RLPx node to socket")?;
             let cidr = options.cidr.clone();
-            tasks.spawn_with_name(
-                "incoming handler",
+            tasks.spawn_with_name("incoming handler", {
+                let handshake_data = PeerStreamHandshakeData {
+                    port,
+                    secret_key,
+                    client_version: client_version.clone(),
+                    capabilities: capabilities.clone(),
+                    capability_server: capability_server.clone(),
+                };
+
                 handle_incoming(
                     Arc::downgrade(&tasks),
                     streams.clone(),
                     node_filter.clone(),
-                    tcp_incoming,
-                    cidr,
-                    PeerStreamHandshakeData {
-                        port,
-                        secret_key,
-                        client_version: client_version.clone(),
-                        capabilities: capabilities.clone(),
-                        capability_server: capability_server.clone(),
-                    },
-                ),
-            );
+                    TokioCidrListener::new(tcp_incoming, cidr),
+                    handshake_data,
+                )
+            });
         }
 
         let server = Arc::new(Self {
