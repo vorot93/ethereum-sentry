@@ -34,7 +34,8 @@ use uuid::Uuid;
 
 const GRACE_PERIOD_SECS: u64 = 2;
 const HANDSHAKE_TIMEOUT_SECS: u64 = 10;
-const PING_TIMEOUT: Duration = Duration::from_secs(60);
+const PING_TIMEOUT: Duration = Duration::from_secs(15);
+const PING_INTERVAL: Duration = Duration::from_secs(60);
 const DISCOVERY_TIMEOUT_SECS: u64 = 90;
 const DISCOVERY_CONNECT_TIMEOUT_SECS: u64 = 5;
 const DIAL_INTERVAL: Duration = Duration::from_millis(100);
@@ -338,23 +339,26 @@ where
             pinged.store(true, Ordering::SeqCst);
 
             let (cb_tx, cb_rx) = oneshot();
-            if pings_tx.send(cb_tx).await.is_ok() && cb_rx.await.is_ok() {
-                sleep(PING_TIMEOUT).await;
 
-                // Timeout has passed, where's the pong? Disconnect.
-                if pinged.load(Ordering::SeqCst) {
-                    let _ = peer_disconnect_tx.send(DisconnectSignal {
-                        initiator: DisconnectInitiator::Local,
-                        reason: DisconnectReason::PingTimeout,
-                    });
-
-                    return;
-                }
-
-                continue;
+            // Pipes went down, pinger must exit
+            if pings_tx.send(cb_tx).await.is_err() || cb_rx.await.is_err() {
+                return;
             }
 
-            return;
+            sleep(PING_TIMEOUT).await;
+
+            // Timeout has passed, let's check for that pong
+            if pinged.load(Ordering::SeqCst) {
+                // No pong? Disconnect.
+                let _ = peer_disconnect_tx.send(DisconnectSignal {
+                    initiator: DisconnectInitiator::Local,
+                    reason: DisconnectReason::PingTimeout,
+                });
+
+                return;
+            }
+
+            sleep(PING_INTERVAL).await;
         }
     });
     ConnectedPeerState { tasks }
