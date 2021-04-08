@@ -12,9 +12,9 @@ edition = "2018"
 
 [dependencies]
 anyhow = "1"
-array-init = "1"
+array-init = "2"
 arrayref = "0.3"
-arrayvec = "0.5"
+arrayvec = "0.7"
 async-trait = "0.1"
 bytes = "1"
 chrono = "0.4"

@@ -18,7 +18,7 @@ pub fn distance(n1: NodeId, n2: NodeId) -> H256 {
     keccak256(n1) ^ keccak256(n2)
 }
 
-pub type NodeBucket = ArrayVec<[NodeRecord; BUCKET_SIZE]>;
+pub type NodeBucket = ArrayVec<NodeRecord, BUCKET_SIZE>;
 
 #[derive(Debug, Default)]
 pub struct KBucket {

@@ -38,7 +38,7 @@ impl FromStr for NodeRecord {
 }
 
 #[derive(Clone, Copy, Debug, Display, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct CapabilityName(pub ArrayString<[u8; 4]>);
+pub struct CapabilityName(pub ArrayString<4>);
 
 impl rlp::Encodable for CapabilityName {
     fn rlp_append(&self, s: &mut RlpStream) {

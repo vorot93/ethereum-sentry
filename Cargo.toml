@@ -9,7 +9,7 @@ publish = false
 
 [dependencies]
 anyhow = "1"
-arrayvec = "0.5"
+arrayvec = "0.7"
 async-stream = "0.3"
 async-trait = "0.1"
 auto_impl = "0.4"
