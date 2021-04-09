@@ -325,7 +325,7 @@ fn resolve_branch<B: Backend, K: EnrKeyUnambiguous>(
                                 }
                             }
                         } else {
-                            warn!("Child {} is empty", subdomain);
+                            debug!("Child {} is empty", subdomain);
                         }
 
                         Ok(())

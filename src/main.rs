@@ -22,6 +22,7 @@ use std::{
     collections::{btree_map::Entry, hash_map::Entry as HashMapEntry, BTreeMap, HashMap, HashSet},
     convert::TryFrom,
     fmt::Debug,
+    str::FromStr,
     sync::Arc,
     time::Duration,
 };
@@ -337,16 +338,16 @@ async fn main() -> anyhow::Result<()> {
                 .unwrap_or_default()
                 .is_empty()
             {
-                EnvFilter::new("info")
+                EnvFilter::new(
+                    "ethereum_sentry=info,devp2p=info,discv4=info,discv5=info,dnsdisc=info",
+                )
             } else {
                 EnvFilter::from_default_env()
             },
         )
         .init();
 
-    let opts =
-        toml::from_str::<Config>(&std::fs::read_to_string(Opts::parse().config_path).unwrap())
-            .unwrap();
+    let opts = Opts::parse();
 
     let secret_key;
     if let Some(data) = opts.node_key {
@@ -374,75 +375,80 @@ async fn main() -> anyhow::Result<()> {
 
     let mut discovery_tasks = StreamMap::new();
 
-    if let Some(dnsdisc_opts) = opts.dnsdisc {
-        info!("Starting DNS discovery fetch from {}", dnsdisc_opts.address);
-        let dns_resolver = dnsdisc::Resolver::new(Arc::new(
-            TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default())
-                .context("Failed to start DNS resolver")?,
-        ));
+    info!("Starting DNS discovery fetch from {}", opts.dnsdisc_address);
+    let dns_resolver = dnsdisc::Resolver::new(Arc::new(
+        TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default())
+            .context("Failed to start DNS resolver")?,
+    ));
 
-        discovery_tasks.insert(
-            "dnsdisc".to_string(),
-            Box::pin(DnsDiscovery::new(
-                Arc::new(dns_resolver),
-                dnsdisc_opts.address,
-                None,
-            )) as Discovery,
-        );
+    discovery_tasks.insert(
+        "dnsdisc".to_string(),
+        Box::pin(DnsDiscovery::new(
+            Arc::new(dns_resolver),
+            opts.dnsdisc_address,
+            None,
+        )) as Discovery,
+    );
+
+    info!("Starting discv4 at port {}", opts.discv4_port);
+
+    let mut bootstrap_nodes = opts
+        .discv4_bootnodes
+        .into_iter()
+        .map(|Discv4NR(nr)| nr)
+        .collect::<Vec<_>>();
+
+    if bootstrap_nodes.is_empty() {
+        bootstrap_nodes = BOOTNODES
+            .iter()
+            .map(|b| Ok(Discv4NR::from_str(b)?.0))
+            .collect::<Result<Vec<_>, <Discv4NR as FromStr>::Err>>()?;
+        info!("Using default discv4 bootstrap nodes");
     }
+    discovery_tasks.insert(
+        "discv4".to_string(),
+        Box::pin(
+            Discv4Builder::default()
+                .with_cache(opts.discv4_cache)
+                .with_concurrent_lookups(opts.discv4_concurrent_lookups)
+                .build(
+                    discv4::Node::new(
+                        format!("0.0.0.0:{}", opts.discv4_port).parse().unwrap(),
+                        secret_key,
+                        bootstrap_nodes,
+                        None,
+                        true,
+                        opts.listen_port,
+                    )
+                    .await
+                    .unwrap(),
+                ),
+        ),
+    );
 
-    if let Some(discv4_opts) = opts.discv4 {
-        info!("Starting discv4 at port {}", discv4_opts.port);
+    if opts.discv5 {
+        let addr = opts
+            .discv5_addr
+            .ok_or_else(|| anyhow!("no discv5 addr specified"))?;
+        let enr = opts
+            .discv5_enr
+            .ok_or_else(|| anyhow!("discv5 ENR not specified"))?;
 
-        let bootstrap_nodes = discv4_opts
-            .bootnodes
-            .into_iter()
-            .map(|Dicv4NR(nr)| nr)
-            .collect::<Vec<_>>();
-
-        if bootstrap_nodes.is_empty() {
-            warn!("discv4 cannot work without bootstrap nodes!");
-        }
-        discovery_tasks.insert(
-            "discv4".to_string(),
-            Box::pin(
-                Discv4Builder::default()
-                    .with_cache(discv4_opts.cache)
-                    .with_concurrent_lookups(discv4_opts.concurrent_lookups)
-                    .build(
-                        discv4::Node::new(
-                            format!("0.0.0.0:{}", discv4_opts.port).parse().unwrap(),
-                            secret_key,
-                            bootstrap_nodes,
-                            None,
-                            true,
-                            opts.listen_port,
-                        )
-                        .await
-                        .unwrap(),
-                    ),
-            ),
-        );
-    }
-
-    if let Some(discv5_opts) = opts.discv5 {
         let mut svc = discv5::Discv5::new(
-            discv5_opts
-                .enr
-                .ok_or_else(|| anyhow!("discv5 ENR not specified"))?,
+            enr,
             discv5::enr::CombinedKey::Secp256k1(
                 k256::ecdsa::SigningKey::from_bytes(secret_key.as_ref()).unwrap(),
             ),
             Default::default(),
         )
         .map_err(|e| anyhow!("{}", e))?;
-        svc.start(discv5_opts.addr.parse()?)
+        svc.start(addr.parse()?)
             .await
             .map_err(|e| anyhow!("{}", e))
             .context("Failed to start discv5")?;
-        info!("Starting discv5 at {}", discv5_opts.addr);
+        info!("Starting discv5 at {}", addr);
 
-        for bootnode in discv5_opts.bootnodes {
+        for bootnode in opts.discv5_bootnodes {
             svc.add_enr(bootnode).unwrap();
         }
         discovery_tasks.insert("discv5".to_string(), Box::pin(Discv5::new(svc, 20)));
