@@ -14,7 +14,7 @@ use futures::sink::SinkExt;
 use parking_lot::Mutex;
 use secp256k1::SecretKey;
 use std::{
-    collections::{hash_map::Entry, BTreeMap, HashMap, HashSet},
+    collections::{hash_map::Entry, BTreeMap, HashMap},
     fmt::Debug,
     future::Future,
     net::SocketAddr,
@@ -44,7 +44,6 @@ const PING_TIMEOUT: Duration = Duration::from_secs(15);
 const PING_INTERVAL: Duration = Duration::from_secs(60);
 const DISCOVERY_TIMEOUT_SECS: u64 = 90;
 const DISCOVERY_CONNECT_TIMEOUT_SECS: u64 = 5;
-const DIAL_INTERVAL: Duration = Duration::from_millis(100);
 
 #[derive(Clone, Copy)]
 enum DisconnectInitiator {
@@ -634,9 +633,7 @@ impl<C: CapabilityServer> Swarm<C> {
         if let Some(mut options) = listen_options {
             tasks.spawn_with_name("dialer", {
                 let server = Arc::downgrade(&server);
-                let tasks = Arc::downgrade(&tasks);
                 async move {
-                    let current_peers = Arc::new(Mutex::new(HashSet::new()));
                     loop {
                         if let Some(server) = server.upgrade() {
                             let streams_len = server.streams.lock().mapping.len();
@@ -657,28 +654,16 @@ impl<C: CapabilityServer> Swarm<C> {
                                         return;
                                     }
                                     Ok(Some((disc_id, Ok(NodeRecord { addr, id: remote_id })))) => {
-                                        if let Some(tasks) = tasks.upgrade() {
-                                            if current_peers.lock().insert(remote_id) {
-                                                debug!("Discovered peer: {:?} ({})", remote_id, disc_id);
-                                                tasks.spawn_with_name(format!("add peer {} at {}", remote_id, addr), {
-                                                    let current_peers = current_peers.clone();
-                                                    async move {
-                                                        if tokio::time::timeout(
-                                                            Duration::from_secs(DISCOVERY_CONNECT_TIMEOUT_SECS),
-                                                            server.add_peer_inner(addr, remote_id, true)
-                                                        ).await.is_err() {
-                                                            debug!("Timed out adding peer {}", remote_id);
-                                                        }
-                                                        current_peers.lock().remove(&remote_id)
-                                                    }
-                                                });
+                                        debug!("Discovered peer: {:?} ({})", remote_id, disc_id);
+                                        tokio::select! {
+                                            _ = server.add_peer_inner(addr, remote_id, true) => {},
+                                            _ = sleep(Duration::from_secs(DISCOVERY_CONNECT_TIMEOUT_SECS)) => {
+                                                debug!("Timed out adding peer {}", remote_id);
                                             }
                                         }
                                     }
                                     Ok(Some((disc_id, Err(e)))) => warn!("Failed to get new peer: {} ({})", e, disc_id)
                                 }
-
-                                sleep(DIAL_INTERVAL).await;
                             } else {
                                 trace!("Skipping discovery as current number of peers is too high: {} >= {}", streams_len, max_peers);
                                 sleep(Duration::from_secs(2)).await;
@@ -706,7 +691,7 @@ impl<C: CapabilityServer> Swarm<C> {
         &self,
         addr: SocketAddr,
         remote_id: PeerId,
-        check_peer: bool,
+        untrusted_peer: bool,
     ) -> impl Future<Output = anyhow::Result<bool>> + Send + 'static {
         let tasks = self.tasks.clone();
         let streams = self.streams.clone();
@@ -771,7 +756,7 @@ impl<C: CapabilityServer> Swarm<C> {
                         );
                     }
                     Entry::Vacant(vacant) => {
-                        if check_peer && !node_filter.is_allowed(connection_num, remote_id) {
+                        if untrusted_peer && !node_filter.is_allowed(connection_num, remote_id) {
                             trace!("rejecting peer {}", remote_id);
                         } else {
                             debug!("connecting to peer {} at {}", remote_id, addr);
