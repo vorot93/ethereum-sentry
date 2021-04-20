@@ -398,17 +398,15 @@ impl ECIES {
     }
 
     fn setup_frame(&mut self, incoming: bool) {
-        let h_nonce: H256 = if incoming {
-            let mut hasher = Keccak256::new();
-            hasher.update(self.nonce.as_ref());
-            hasher.update(self.remote_nonce.unwrap().as_ref());
-            H256::from(hasher.finalize().as_ref())
+        let mut hasher = Keccak256::new();
+        for el in &if incoming {
+            [self.nonce, self.remote_nonce.unwrap()]
         } else {
-            let mut hasher = Keccak256::new();
-            hasher.update(self.remote_nonce.unwrap().as_ref());
-            hasher.update(self.nonce.as_ref());
-            H256::from(hasher.finalize().as_ref())
-        };
+            [self.remote_nonce.unwrap(), self.nonce]
+        } {
+            hasher.update(el);
+        }
+        let h_nonce = H256::from(hasher.finalize().as_ref());
 
         let iv = H128::default();
         let shared_secret: H256 = {
