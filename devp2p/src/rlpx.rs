@@ -548,6 +548,7 @@ pub struct ListenOptions {
     pub max_peers: usize,
     pub addr: SocketAddr,
     pub cidr: Option<IpCidr>,
+    pub no_new_peers: Arc<AtomicBool>,
 }
 
 impl Swarm<()> {
@@ -639,7 +640,7 @@ impl<C: CapabilityServer> Swarm<C> {
                             let streams_len = server.streams.lock().mapping.len();
                             let max_peers = server.node_filter.lock().max_peers();
 
-                            if streams_len < max_peers {
+                            if !options.no_new_peers.load(Ordering::SeqCst) && streams_len < max_peers {
                                 trace!("Discovering peers as our peer count is too low: {} < {}", streams_len, max_peers);
                                 match tokio::time::timeout(
                                     Duration::from_secs(DISCOVERY_TIMEOUT_SECS),

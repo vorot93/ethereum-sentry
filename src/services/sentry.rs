@@ -199,7 +199,7 @@ impl Sentry for SentryService {
         let s = FullStatusData::try_from(request.into_inner())
             .map_err(|e| tonic::Status::invalid_argument(e.to_string()))?;
 
-        *self.capability_server.status_message.write() = Some(s);
+        self.capability_server.set_status(s);
 
         Ok(Response::new(()))
     }

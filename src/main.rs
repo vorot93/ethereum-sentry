@@ -23,7 +23,10 @@ use std::{
     convert::TryFrom,
     fmt::Debug,
     str::FromStr,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     time::Duration,
 };
 use task_group::TaskGroup;
@@ -124,6 +127,8 @@ pub struct CapabilityServerImpl {
     data_sender: BroadcastSender<InboundMessage>,
     upload_requests_sender: BroadcastSender<InboundMessage>,
     tx_message_sender: BroadcastSender<InboundMessage>,
+
+    no_new_peers: Arc<AtomicBool>,
 }
 
 impl CapabilityServerImpl {
@@ -165,6 +170,11 @@ impl CapabilityServerImpl {
 
     pub fn connected_peers(&self) -> usize {
         self.valid_peers.read().len()
+    }
+
+    pub fn set_status(&self, message: FullStatusData) {
+        *self.status_message.write() = Some(message);
+        self.no_new_peers.store(false, Ordering::SeqCst);
     }
 
     #[instrument(skip(self))]
@@ -472,6 +482,8 @@ async fn main() -> anyhow::Result<()> {
     let data_sender = broadcast(opts.max_peers * BUFFERING_FACTOR).0;
     let upload_requests_sender = broadcast(opts.max_peers * BUFFERING_FACTOR).0;
     let tx_message_sender = broadcast(opts.max_peers * BUFFERING_FACTOR).0;
+
+    let no_new_peers = Arc::new(AtomicBool::new(true));
     let capability_server = Arc::new(CapabilityServerImpl {
         peer_pipes: Default::default(),
         block_tracker: Default::default(),
@@ -480,6 +492,7 @@ async fn main() -> anyhow::Result<()> {
         data_sender,
         upload_requests_sender,
         tx_message_sender,
+        no_new_peers: no_new_peers.clone(),
     });
 
     let swarm = Swarm::builder()
@@ -489,6 +502,7 @@ async fn main() -> anyhow::Result<()> {
             max_peers: opts.max_peers,
             addr: listen_addr.parse().unwrap(),
             cidr: opts.cidr,
+            no_new_peers,
         })
         .with_client_version(format!("sentry/v{}", env!("CARGO_PKG_VERSION")))
         .build(

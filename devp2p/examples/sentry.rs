@@ -263,6 +263,7 @@ async fn main() {
             max_peers: 50,
             addr: format!("0.0.0.0:{}", port).parse().unwrap(),
             cidr: None,
+            no_new_peers: Default::default(),
         })
         .build(
             btreemap! { CapabilityId {
