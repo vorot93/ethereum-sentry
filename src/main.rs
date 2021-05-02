@@ -507,7 +507,7 @@ async fn main() -> anyhow::Result<()> {
         .with_client_version(format!("sentry/v{}", env!("CARGO_PKG_VERSION")))
         .build(
             btreemap! {
-                CapabilityId { name: capability_name(), version: 65 } => 17,
+                CapabilityId { name: capability_name(), version: 66 } => 17,
             },
             capability_server.clone(),
             secret_key,
