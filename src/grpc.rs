@@ -37,13 +37,19 @@ impl From<sentry::MessageId> for EthMessageId {
     fn from(id: sentry::MessageId) -> Self {
         match id {
             sentry::MessageId::NewBlockHashes => Self::NewBlockHashes,
-            sentry::MessageId::GetBlockHeaders => Self::GetBlockHeaders,
-            sentry::MessageId::BlockHeaders => Self::BlockHeaders,
-            sentry::MessageId::GetBlockBodies => Self::GetBlockBodies,
-            sentry::MessageId::BlockBodies => Self::BlockBodies,
             sentry::MessageId::NewBlock => Self::NewBlock,
+            sentry::MessageId::Transactions => Self::Transactions,
+            sentry::MessageId::NewPooledTransactionHashes => Self::NewPooledTransactionHashes,
+            sentry::MessageId::GetBlockHeaders => Self::GetBlockHeaders,
+            sentry::MessageId::GetBlockBodies => Self::GetBlockBodies,
             sentry::MessageId::GetNodeData => Self::GetNodeData,
+            sentry::MessageId::GetReceipts => Self::GetReceipts,
+            sentry::MessageId::GetPooledTransactions => Self::GetPooledTransactions,
+            sentry::MessageId::BlockHeaders => Self::BlockHeaders,
+            sentry::MessageId::BlockBodies => Self::BlockBodies,
             sentry::MessageId::NodeData => Self::NodeData,
+            sentry::MessageId::Receipts => Self::Receipts,
+            sentry::MessageId::PooledTransactions => Self::PooledTransactions,
         }
     }
 }
