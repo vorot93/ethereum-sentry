@@ -3,8 +3,6 @@ use clap::Clap;
 use derive_more::FromStr;
 use devp2p::NodeRecord;
 use educe::Educe;
-use serde::Deserialize;
-use serde_with::DeserializeFromStr;
 use std::path::PathBuf;
 
 pub const BOOTNODES: &[&str] = &[
@@ -60,15 +58,15 @@ pub struct Opts {
     pub peers_file: Option<PathBuf>,
 }
 
-#[derive(Debug, Deserialize, Educe)]
+#[derive(Debug, Educe)]
 #[educe(Default)]
 pub struct DnsDiscConfig {
     #[educe(Default("all.mainnet.ethdisco.net"))]
     pub address: String,
 }
 
-#[derive(Debug, DeserializeFromStr, FromStr)]
+#[derive(Debug, FromStr)]
 pub struct NR(pub NodeRecord);
 
-#[derive(Debug, DeserializeFromStr, FromStr)]
+#[derive(Debug, FromStr)]
 pub struct Discv4NR(pub discv4::NodeRecord);

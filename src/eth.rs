@@ -5,7 +5,6 @@ use enum_primitive_derive::*;
 use ethereum_forkid::{ForkFilter, ForkId};
 use ethereum_types::*;
 use rlp_derive::*;
-use serde::Deserialize;
 use std::{collections::BTreeSet, convert::TryFrom};
 
 pub fn capability_name() -> CapabilityName {
@@ -22,7 +21,7 @@ pub struct StatusMessage {
     pub fork_id: ForkId,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug)]
 pub struct Forks {
     pub genesis: H256,
     pub forks: BTreeSet<u64>,

@@ -12,7 +12,6 @@ anyhow = "1"
 arrayvec = "0.7"
 async-stream = "0.3"
 async-trait = "0.1"
-auto_impl = "0.4"
 bytes = "1"
 cidr = "0.1"
 clap = "3.0.0-beta.2"
@@ -37,17 +36,12 @@ num-traits = "0.2"
 parking_lot = "0.11"
 plain_hasher = "0.2"
 prost = "0.7"
-reqwest = { version = "0.11", features = ["json"] }
 rlp = "0.5"
 rlp-derive = "0.1"
 secp256k1 = "0.20"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-serde_with = "1"
 stubborn-io = "0.3"
 task-group = { git = "https://github.com/vorot93/task-group" }
 tokio = { version = "1", features = ["full"] }
-tokio-serde = { version = "0.8", features = ["bincode"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 toml = "0.5"
 tonic = { version = "0.4", features = ["tls"] }
@@ -56,7 +50,7 @@ tracing = "0.1"
 tracing-futures = "0.2"
 tracing-subscriber = "0.2"
 trust-dns-resolver = "0.20"
-url = { version = "2", features = ["serde"] }
+url = "2"
 
 [dev-dependencies]
 rand = "0.8"
