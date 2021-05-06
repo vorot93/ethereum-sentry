@@ -41,7 +41,7 @@ use tokio::{
 use tokio_stream::{StreamExt, StreamMap};
 use tonic::transport::Server;
 use tracing::*;
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::{prelude::*, EnvFilter};
 use trust_dns_resolver::{config::*, TokioAsyncResolver};
 
 mod config;
@@ -342,22 +342,30 @@ impl CapabilityServer for CapabilityServerImpl {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            if std::env::var(EnvFilter::DEFAULT_ENV)
-                .unwrap_or_default()
-                .is_empty()
-            {
-                EnvFilter::new(
-                    "ethereum_sentry=info,devp2p=info,discv4=info,discv5=info,dnsdisc=info",
-                )
-            } else {
-                EnvFilter::from_default_env()
-            },
-        )
-        .init();
-
     let opts = Opts::parse();
+
+    let filter = if std::env::var(EnvFilter::DEFAULT_ENV)
+        .unwrap_or_default()
+        .is_empty()
+    {
+        EnvFilter::new("ethereum_sentry=info,devp2p=info,discv4=info,discv5=info,dnsdisc=info")
+    } else {
+        EnvFilter::from_default_env()
+    };
+    let registry = tracing_subscriber::registry()
+        // the `TasksLayer` can be used in combination with other `tracing` layers...
+        .with(tracing_subscriber::fmt::layer());
+
+    if opts.tokio_console {
+        let (layer, server) = console_subscriber::TasksLayer::new();
+        registry
+            .with(filter.add_directive("tokio=trace".parse()?))
+            .with(layer)
+            .init();
+        tokio::spawn(async move { server.serve().await.expect("server failed") });
+    } else {
+        registry.with(filter).init();
+    }
 
     let secret_key;
     if let Some(data) = opts.node_key {

@@ -56,6 +56,8 @@ pub struct Opts {
     pub max_peers: usize,
     #[clap(long, env)]
     pub peers_file: Option<PathBuf>,
+    #[clap(long, env)]
+    pub tokio_console: bool,
 }
 
 #[derive(Debug, Educe)]

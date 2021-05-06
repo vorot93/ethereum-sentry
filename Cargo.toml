@@ -15,6 +15,7 @@ async-trait = "0.1"
 bytes = "1"
 cidr = "0.1"
 clap = "3.0.0-beta.2"
+console-subscriber = { git = "https://github.com/tokio-rs/console" }
 derive_more = "0.99"
 devp2p = { path = "devp2p", features = ["discv4", "discv5", "dnsdisc"] }
 discv4 = { path = "discv4" }
@@ -41,7 +42,7 @@ rlp-derive = "0.1"
 secp256k1 = "0.20"
 stubborn-io = "0.3"
 task-group = { git = "https://github.com/vorot93/task-group" }
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["full", "tracing"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 toml = "0.5"
 tonic = { version = "0.4", features = ["tls"] }

@@ -381,6 +381,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "console-api"
+version = "0.1.0"
+source = "git+https://github.com/tokio-rs/console#cb7f27b9fc26af06dcb14b492241e2e94814b964"
+dependencies = [
+ "prost",
+ "prost-types",
+ "tonic",
+ "tonic-build",
+ "tracing-core",
+]
+
+[[package]]
+name = "console-subscriber"
+version = "0.1.0"
+source = "git+https://github.com/tokio-rs/console#cb7f27b9fc26af06dcb14b492241e2e94814b964"
+dependencies = [
+ "console-api",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+ "tracing",
+ "tracing-core",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "const-oid"
 version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -825,6 +851,7 @@ dependencies = [
  "bytes",
  "cidr",
  "clap",
+ "console-subscriber",
  "derive_more",
  "devp2p",
  "discv4",
@@ -2460,6 +2487,7 @@ dependencies = [
  "pin-project-lite",
  "signal-hook-registry",
  "tokio-macros",
+ "tracing",
  "winapi",
 ]
 
