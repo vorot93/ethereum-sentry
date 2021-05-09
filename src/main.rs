@@ -472,15 +472,16 @@ async fn main() -> anyhow::Result<()> {
         discovery_tasks.insert("discv5".to_string(), Box::pin(Discv5::new(svc, 20)));
     }
 
-    if !opts.reserved_peers.is_empty() {
-        info!("Enabling reserved peers: {:?}", opts.reserved_peers);
+    if !opts.static_peers.is_empty() {
+        info!("Enabling static peers: {:?}", opts.static_peers);
         discovery_tasks.insert(
-            "reserved peers".to_string(),
-            Box::pin(Bootnodes::from(
-                opts.reserved_peers
+            "static peers".to_string(),
+            Box::pin(StaticNodes::new(
+                opts.static_peers
                     .iter()
                     .map(|&NR(NodeRecord { addr, id })| (addr, id))
                     .collect::<HashMap<_, _>>(),
+                Duration::from_millis(opts.static_peers_interval),
             )),
         );
     }

@@ -51,7 +51,9 @@ pub struct Opts {
     #[clap(long, env)]
     pub discv5_bootnodes: Vec<discv5::Enr>,
     #[clap(long, env)]
-    pub reserved_peers: Vec<NR>,
+    pub static_peers: Vec<NR>,
+    #[clap(long, env, default_value = "5000")]
+    pub static_peers_interval: u64,
     #[clap(long, default_value = "50")]
     pub max_peers: usize,
     #[clap(long, env)]

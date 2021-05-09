@@ -1,7 +1,8 @@
 use crate::types::*;
-use derive_more::From;
-use futures::stream::BoxStream;
-use std::{collections::HashMap, net::SocketAddr, task::Poll};
+use async_stream::stream;
+use futures::{stream::BoxStream, StreamExt};
+use std::{collections::HashMap, net::SocketAddr, pin::Pin, task::Poll, time::Duration};
+use tokio::time::sleep;
 use tokio_stream::Stream;
 
 #[cfg(feature = "discv4")]
@@ -30,20 +31,28 @@ pub use dnsdisc;
 
 pub type Discovery = BoxStream<'static, anyhow::Result<NodeRecord>>;
 
-#[derive(Clone, Debug, From)]
-pub struct Bootnodes(pub HashMap<SocketAddr, PeerId>);
+pub struct StaticNodes(Pin<Box<dyn Stream<Item = anyhow::Result<NodeRecord>> + Send + 'static>>);
 
-impl Stream for Bootnodes {
+impl StaticNodes {
+    pub fn new(nodes: HashMap<SocketAddr, PeerId>, delay: Duration) -> Self {
+        Self(Box::pin(stream! {
+            loop {
+                for (&addr, &id) in &nodes {
+                    yield Ok(NodeRecord { id, addr });
+                    sleep(delay).await;
+                }
+            }
+        }))
+    }
+}
+
+impl Stream for StaticNodes {
     type Item = anyhow::Result<NodeRecord>;
 
     fn poll_next(
-        self: std::pin::Pin<&mut Self>,
-        _: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Option<Self::Item>> {
-        if let Some((&addr, &id)) = self.0.iter().next() {
-            Poll::Ready(Some(Ok(NodeRecord { id, addr })))
-        } else {
-            Poll::Ready(None)
-        }
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Option<Self::Item>> {
+        self.0.poll_next_unpin(cx)
     }
 }
