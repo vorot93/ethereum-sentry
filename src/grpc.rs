@@ -22,17 +22,6 @@ impl TryFrom<EthMessageId> for sentry::MessageId {
     }
 }
 
-impl EthMessageId {
-    pub fn from_outbound_message_id(id: i32) -> Option<Self> {
-        Some(match id {
-            0 => Self::GetBlockHeaders,
-            1 => Self::GetBlockBodies,
-            2 => Self::GetNodeData,
-            _ => return None,
-        })
-    }
-}
-
 impl From<sentry::MessageId> for EthMessageId {
     fn from(id: sentry::MessageId) -> Self {
         match id {

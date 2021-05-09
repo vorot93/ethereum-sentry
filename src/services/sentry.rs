@@ -1,7 +1,8 @@
 use crate::{
     eth::*,
     grpc::sentry::{
-        sentry_server::*, InboundMessage, OutboundMessageData, PeerMinBlockRequest, SentPeers,
+        sentry_server::*, InboundMessage, MessageId as ProtoMessageId, OutboundMessageData,
+        PeerMinBlockRequest, SentPeers,
     },
     CapabilityServerImpl,
 };
@@ -41,12 +42,13 @@ impl SentryService {
         F: FnOnce(&CapabilityServerImpl) -> IT,
         IT: IntoIterator<Item = PeerId>,
     {
+        let mut peers = vec![];
         if let Some(request) = request {
             let data = request.data;
-            let id = request.id.to_usize().unwrap();
+            if let Some(id) = ProtoMessageId::from_i32(request.id) {
+                let id = EthMessageId::from(id).to_usize().unwrap();
 
-            return SentPeers {
-                peers: (pred)(&*self.capability_server)
+                peers = (pred)(&*self.capability_server)
                     .into_iter()
                     .map(|peer| {
                         let data = data.clone();
@@ -71,11 +73,11 @@ impl SentryService {
                     .filter_map(identity)
                     .map(|peer_id| peer_id.into())
                     .collect::<Vec<_>>()
-                    .await,
-            };
+                    .await;
+            }
         }
 
-        SentPeers { peers: vec![] }
+        SentPeers { peers }
     }
 
     fn make_channel(
