@@ -105,7 +105,7 @@ impl CapabilityServerImpl {
 impl CapabilityServer for CapabilityServerImpl {
     #[instrument(skip(self, peer), fields(peer=&*peer.to_string()))]
     fn on_peer_connect(&self, peer: PeerId, caps: HashMap<CapabilityName, CapabilityVersion>) {
-        info!("Settting up peer state");
+        info!("Setting up peer state");
         let status_message = StatusMessage {
             protocol_version: *caps.get(&eth()).unwrap(),
             network_id: 1,
