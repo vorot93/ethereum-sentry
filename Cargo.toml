@@ -31,7 +31,7 @@ ethereum-types = "0.11"
 futures = "0.3"
 hex = "0.4"
 hex-literal = "0.3"
-k256 = { version = "0.7", features = ["ecdsa"] }
+k256 = { version = "0.8", features = ["ecdsa"] }
 maplit = "1"
 num-traits = "0.2"
 parking_lot = "0.11"
@@ -57,8 +57,4 @@ url = "2"
 rand = "0.8"
 
 [workspace]
-members = [
-    "devp2p",
-    "discv4",
-    "dnsdisc",
-]
+members = ["devp2p", "discv4", "dnsdisc"]

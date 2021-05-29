@@ -23,7 +23,7 @@ use tracing::*;
 mod backend;
 pub use crate::backend::Backend;
 
-type Base32Hash = ArrayString<[u8; BASE32_HASH_LEN]>;
+type Base32Hash = ArrayString<BASE32_HASH_LEN>;
 
 pub type QueryStream<K> = Pin<Box<dyn Stream<Item = anyhow::Result<Enr<K>>> + Send + 'static>>;
 

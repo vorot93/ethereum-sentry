@@ -268,7 +268,7 @@ async fn main() {
         .build(
             btreemap! { CapabilityId {
                 name: eth(),
-                version: 63,
+                version: 65,
             } => 17 },
             capability_server,
             secret_key,

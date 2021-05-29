@@ -26,7 +26,7 @@ impl MAC {
 
     pub fn update_header(&mut self, data: &HeaderBytes) {
         let aes = Ecb::<_, NoPadding>::new(
-            Aes256::new_varkey(self.secret.as_ref()).unwrap(),
+            Aes256::new_from_slice(self.secret.as_ref()).unwrap(),
             &Default::default(),
         );
         let mut encrypted = self.digest().to_fixed_bytes();
@@ -41,7 +41,7 @@ impl MAC {
         self.hasher.update(data);
         let prev = self.digest();
         let aes = Ecb::<_, NoPadding>::new(
-            Aes256::new_varkey(self.secret.as_ref()).unwrap(),
+            Aes256::new_from_slice(self.secret.as_ref()).unwrap(),
             &Default::default(),
         );
         let mut encrypted = self.digest().to_fixed_bytes();

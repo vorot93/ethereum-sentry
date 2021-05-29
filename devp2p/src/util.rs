@@ -15,7 +15,7 @@ pub fn sha256(data: &[u8]) -> H256 {
 }
 
 pub fn hmac_sha256(key: &[u8], input: &[&[u8]], auth_data: &[u8]) -> H256 {
-    let mut hmac = Hmac::<Sha256>::new_varkey(key).unwrap();
+    let mut hmac = Hmac::<Sha256>::new_from_slice(key).unwrap();
     for input in input {
         hmac.update(input);
     }

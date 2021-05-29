@@ -168,14 +168,14 @@ where
         capabilities: Vec<CapabilityInfo>,
         port: u16,
     ) -> anyhow::Result<Self> {
-        Ok(Self::new(
+        Self::new(
             ECIESStream::connect(transport, secret_key, remote_id).await?,
             secret_key,
             client_version,
             capabilities,
             port,
         )
-        .await?)
+        .await
     }
 
     /// Incoming peer stream over TCP
@@ -190,14 +190,14 @@ where
         capabilities: Vec<CapabilityInfo>,
         port: u16,
     ) -> anyhow::Result<Self> {
-        Ok(Self::new(
+        Self::new(
             ECIESStream::incoming(transport, secret_key).await?,
             secret_key,
             client_version,
             capabilities,
             port,
         )
-        .await?)
+        .await
     }
 
     /// Create a new peer stream
