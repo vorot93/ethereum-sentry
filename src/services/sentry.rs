@@ -2,7 +2,7 @@ use crate::{
     eth::*,
     grpc::sentry::{
         sentry_server::*, InboundMessage, MessageId as ProtoMessageId, OutboundMessageData,
-        PeerMinBlockRequest, SentPeers,
+        PeerMinBlockRequest, SentPeers, SetStatusReply,
     },
     CapabilityServerImpl,
 };
@@ -10,14 +10,10 @@ use async_trait::async_trait;
 use devp2p::*;
 use futures::{stream::FuturesUnordered, Stream};
 use num_traits::ToPrimitive;
-use std::{
-    convert::{identity, TryFrom},
-    pin::Pin,
-    sync::Arc,
-};
-use tokio::sync::broadcast::Sender as BroadcastSender;
+use std::{collections::HashSet, convert::TryFrom, pin::Pin, sync::Arc};
 use tokio_stream::{wrappers::BroadcastStream, StreamExt};
 use tonic::Response;
+use tracing::*;
 
 pub type InboundMessageStream =
     Pin<Box<dyn Stream<Item = anyhow::Result<InboundMessage, tonic::Status>> + Send + Sync>>;
@@ -42,52 +38,72 @@ impl SentryService {
         F: FnOnce(&CapabilityServerImpl) -> IT,
         IT: IntoIterator<Item = PeerId>,
     {
-        let mut peers = vec![];
-        if let Some(request) = request {
-            let data = request.data;
-            if let Some(id) = ProtoMessageId::from_i32(request.id) {
-                let id = EthMessageId::from(id).to_usize().unwrap();
-
-                peers = (pred)(&*self.capability_server)
-                    .into_iter()
-                    .map(|peer| {
-                        let data = data.clone();
-                        async move {
-                            if let Some(sender) = self.capability_server.sender(peer) {
-                                if sender
-                                    .send(OutboundEvent::Message {
-                                        capability_name: capability_name(),
-                                        message: Message { id, data },
-                                    })
-                                    .await
-                                    .is_ok()
-                                {
-                                    return Some(peer);
-                                }
-                            }
-
-                            None
-                        }
-                    })
-                    .collect::<FuturesUnordered<_>>()
-                    .filter_map(identity)
-                    .map(|peer_id| peer_id.into())
-                    .collect::<Vec<_>>()
-                    .await;
-            }
-        }
-
-        SentPeers { peers }
+        let result = self.try_send_by_predicate(request, pred).await;
+        result.unwrap_or_else(|error| {
+            warn!(
+                "SentryService send_by_predicate ignores a message: {:?}",
+                error
+            );
+            SentPeers { peers: Vec::new() }
+        })
     }
 
-    fn make_channel(
+    async fn try_send_by_predicate<F, IT>(
         &self,
-        f: impl Fn(&CapabilityServerImpl) -> &BroadcastSender<InboundMessage>,
-    ) -> Response<InboundMessageStream> {
-        Response::new(Box::pin(
-            BroadcastStream::new((f)(&self.capability_server).subscribe())
-                .filter_map(|res| res.ok().map(Ok)),
-        ))
+        request: Option<OutboundMessageData>,
+        pred: F,
+    ) -> anyhow::Result<SentPeers>
+    where
+        F: FnOnce(&CapabilityServerImpl) -> IT,
+        IT: IntoIterator<Item = PeerId>,
+    {
+        let request = request.ok_or_else(|| anyhow::anyhow!("empty request"))?;
+
+        let proto_id = ProtoMessageId::from_i32(request.id)
+            .ok_or_else(|| anyhow::anyhow!("unrecognized ProtoMessageId"))?;
+        let eth_id = EthMessageId::try_from(proto_id)?;
+
+        let message = Message {
+            id: eth_id.to_usize().unwrap(),
+            data: request.data,
+        };
+
+        let peers = (pred)(&*self.capability_server)
+            .into_iter()
+            .map(|peer| {
+                let message = message.clone();
+                async move { self.send_message(message, peer).await }
+            })
+            .collect::<FuturesUnordered<_>>()
+            .filter_map(|res| res.ok()) // ignore errors
+            .map(|peer_id| peer_id.into())
+            .collect::<Vec<_>>()
+            .await;
+
+        Ok(SentPeers { peers })
+    }
+
+    async fn send_message(
+        &self,
+        message: Message,
+        peer: devp2p::PeerId,
+    ) -> anyhow::Result<devp2p::PeerId> {
+        let sender = self
+            .capability_server
+            .sender(peer)
+            .ok_or_else(|| anyhow::anyhow!("sender not found for peer"))?;
+
+        let outbound_message = OutboundEvent::Message {
+            capability_name: capability_name(),
+            message,
+        };
+
+        let result = sender.send(outbound_message).await;
+
+        match result {
+            Ok(_) => Ok(peer),
+            Err(error) => Err(anyhow::anyhow!(error)),
+        }
     }
 }
 
@@ -111,6 +127,16 @@ impl Sentry for SentryService {
         }
 
         Ok(Response::new(()))
+    }
+
+    async fn peer_count(
+        &self,
+        _: tonic::Request<crate::grpc::sentry::PeerCountRequest>,
+    ) -> Result<Response<crate::grpc::sentry::PeerCountReply>, tonic::Status> {
+        let reply = crate::grpc::sentry::PeerCountReply {
+            count: self.capability_server.all_peers().len() as u64,
+        };
+        Ok(Response::new(reply))
     }
 
     async fn send_message_by_min_block(
@@ -197,39 +223,40 @@ impl Sentry for SentryService {
     async fn set_status(
         &self,
         request: tonic::Request<crate::grpc::sentry::StatusData>,
-    ) -> Result<Response<()>, tonic::Status> {
+    ) -> Result<Response<SetStatusReply>, tonic::Status> {
         let s = FullStatusData::try_from(request.into_inner())
             .map_err(|e| tonic::Status::invalid_argument(e.to_string()))?;
 
         self.capability_server.set_status(s);
 
-        Ok(Response::new(()))
+        let protocol_version = self.capability_server.protocol_version;
+        let reply = SetStatusReply {
+            protocol: crate::grpc::sentry::Protocol::from(protocol_version) as i32,
+        };
+
+        Ok(Response::new(reply))
     }
 
-    type ReceiveMessagesStream = InboundMessageStream;
+    type MessagesStream = InboundMessageStream;
 
-    async fn receive_messages(
+    async fn messages(
         &self,
-        _request: tonic::Request<()>,
-    ) -> Result<Response<Self::ReceiveMessagesStream>, tonic::Status> {
-        Ok(self.make_channel(|c| &c.data_sender))
-    }
+        request: tonic::Request<crate::grpc::sentry::MessagesRequest>,
+    ) -> Result<Response<Self::MessagesStream>, tonic::Status> {
+        let ids_set = request
+            .into_inner()
+            .ids
+            .into_iter()
+            .collect::<HashSet<i32>>();
 
-    type ReceiveUploadMessagesStream = InboundMessageStream;
+        let receiver = self.capability_server.data_sender.subscribe();
+        let stream = BroadcastStream::new(receiver)
+            .filter_map(|res| res.ok()) // ignore BroadcastStreamRecvError
+            .filter(move |message: &InboundMessage| {
+                ids_set.is_empty() || ids_set.contains(&message.id)
+            })
+            .map(Ok);
 
-    async fn receive_upload_messages(
-        &self,
-        _request: tonic::Request<()>,
-    ) -> Result<Response<Self::ReceiveUploadMessagesStream>, tonic::Status> {
-        Ok(self.make_channel(|c| &c.upload_requests_sender))
-    }
-
-    type ReceiveTxMessagesStream = InboundMessageStream;
-
-    async fn receive_tx_messages(
-        &self,
-        _request: tonic::Request<()>,
-    ) -> Result<Response<Self::ReceiveTxMessagesStream>, tonic::Status> {
-        Ok(self.make_channel(|c| &c.tx_message_sender))
+        Ok(Response::new(Box::pin(stream)))
     }
 }

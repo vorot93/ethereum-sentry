@@ -97,3 +97,9 @@ pub enum EthMessageId {
     GetReceipts = 15,
     Receipts = 16,
 }
+
+#[derive(Clone, Copy, Debug, Primitive)]
+pub enum EthProtocolVersion {
+    Eth65 = 65,
+    Eth66 = 66,
+}
