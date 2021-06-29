@@ -122,11 +122,10 @@ pub struct CapabilityServerImpl {
     block_tracker: Arc<RwLock<BlockTracker>>,
 
     status_message: Arc<RwLock<Option<FullStatusData>>>,
+    protocol_version: EthProtocolVersion,
     valid_peers: Arc<RwLock<HashSet<PeerId>>>,
 
     data_sender: BroadcastSender<InboundMessage>,
-    upload_requests_sender: BroadcastSender<InboundMessage>,
-    tx_message_sender: BroadcastSender<InboundMessage>,
 
     no_new_peers: Arc<AtomicBool>,
 }
@@ -220,32 +219,19 @@ impl CapabilityServerImpl {
                         }
                     }
                     Some(inbound_id) if valid_peer => {
-                        if let Some(sender) = match inbound_id {
-                            EthMessageId::BlockBodies
-                            | EthMessageId::BlockHeaders
-                            | EthMessageId::NodeData => Some(&self.data_sender),
-                            EthMessageId::GetBlockBodies
-                            | EthMessageId::GetBlockHeaders
-                            | EthMessageId::GetNodeData => Some(&self.upload_requests_sender),
-                            // EthMessageId::Transactions
-                            // | EthMessageId::NewPooledTransactionHashes
-                            // | EthMessageId::GetPooledTransactions
-                            // | EthMessageId::PooledTransactions => Some(&self.tx_message_sender),
-                            _ => None,
-                        } {
-                            if sender
-                                .send(InboundMessage {
-                                    id: sentry::MessageId::try_from(inbound_id).unwrap() as i32,
-                                    data,
-                                    peer_id: Some(peer.into()),
-                                })
-                                .is_err()
-                            {
-                                warn!("no connected sentry, dropping status and peer");
-                                *self.status_message.write() = None;
+                        if self
+                            .data_sender
+                            .send(InboundMessage {
+                                id: sentry::MessageId::try_from(inbound_id).unwrap() as i32,
+                                data,
+                                peer_id: Some(peer.into()),
+                            })
+                            .is_err()
+                        {
+                            warn!("no connected sentry, dropping status and peer");
+                            *self.status_message.write() = None;
 
-                                return Err(DisconnectReason::ClientQuitting);
-                            }
+                            return Err(DisconnectReason::ClientQuitting);
                         }
                     }
                     _ => {}
@@ -488,19 +474,17 @@ async fn main() -> anyhow::Result<()> {
 
     let tasks = Arc::new(TaskGroup::new());
 
+    let protocol_version = EthProtocolVersion::Eth66;
     let data_sender = broadcast(opts.max_peers * BUFFERING_FACTOR).0;
-    let upload_requests_sender = broadcast(opts.max_peers * BUFFERING_FACTOR).0;
-    let tx_message_sender = broadcast(opts.max_peers * BUFFERING_FACTOR).0;
-
     let no_new_peers = Arc::new(AtomicBool::new(true));
+
     let capability_server = Arc::new(CapabilityServerImpl {
         peer_pipes: Default::default(),
         block_tracker: Default::default(),
         status_message: Default::default(),
+        protocol_version,
         valid_peers: Default::default(),
         data_sender,
-        upload_requests_sender,
-        tx_message_sender,
         no_new_peers: no_new_peers.clone(),
     });
 
@@ -516,7 +500,7 @@ async fn main() -> anyhow::Result<()> {
         .with_client_version(format!("sentry/v{}", env!("CARGO_PKG_VERSION")))
         .build(
             btreemap! {
-                CapabilityId { name: capability_name(), version: 66 } => 17,
+                CapabilityId { name: capability_name(), version: protocol_version as CapabilityVersion } => 17,
             },
             capability_server.clone(),
             secret_key,

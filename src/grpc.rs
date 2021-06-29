@@ -1,4 +1,4 @@
-use crate::eth::EthMessageId;
+use crate::eth::{EthMessageId, EthProtocolVersion};
 use anyhow::bail;
 use std::convert::TryFrom;
 
@@ -9,36 +9,48 @@ impl TryFrom<EthMessageId> for sentry::MessageId {
 
     fn try_from(id: EthMessageId) -> Result<Self, Self::Error> {
         Ok(match id {
-            EthMessageId::NewBlockHashes => Self::NewBlockHashes,
-            EthMessageId::GetBlockHeaders => Self::GetBlockHeaders,
-            EthMessageId::BlockHeaders => Self::BlockHeaders,
-            EthMessageId::GetBlockBodies => Self::GetBlockBodies,
-            EthMessageId::BlockBodies => Self::BlockBodies,
-            EthMessageId::NewBlock => Self::NewBlock,
-            EthMessageId::GetNodeData => Self::GetNodeData,
-            EthMessageId::NodeData => Self::NodeData,
+            EthMessageId::NewBlockHashes => Self::NewBlockHashes66,
+            EthMessageId::GetBlockHeaders => Self::GetBlockHeaders66,
+            EthMessageId::BlockHeaders => Self::BlockHeaders66,
+            EthMessageId::GetBlockBodies => Self::GetBlockBodies66,
+            EthMessageId::BlockBodies => Self::BlockBodies66,
+            EthMessageId::NewBlock => Self::NewBlock66,
+            EthMessageId::GetNodeData => Self::GetNodeData66,
+            EthMessageId::NodeData => Self::NodeData66,
             other => bail!("Invalid message id: {:?}", other),
         })
     }
 }
 
-impl From<sentry::MessageId> for EthMessageId {
-    fn from(id: sentry::MessageId) -> Self {
-        match id {
-            sentry::MessageId::NewBlockHashes => Self::NewBlockHashes,
-            sentry::MessageId::NewBlock => Self::NewBlock,
-            sentry::MessageId::Transactions => Self::Transactions,
-            sentry::MessageId::NewPooledTransactionHashes => Self::NewPooledTransactionHashes,
-            sentry::MessageId::GetBlockHeaders => Self::GetBlockHeaders,
-            sentry::MessageId::GetBlockBodies => Self::GetBlockBodies,
-            sentry::MessageId::GetNodeData => Self::GetNodeData,
-            sentry::MessageId::GetReceipts => Self::GetReceipts,
-            sentry::MessageId::GetPooledTransactions => Self::GetPooledTransactions,
-            sentry::MessageId::BlockHeaders => Self::BlockHeaders,
-            sentry::MessageId::BlockBodies => Self::BlockBodies,
-            sentry::MessageId::NodeData => Self::NodeData,
-            sentry::MessageId::Receipts => Self::Receipts,
-            sentry::MessageId::PooledTransactions => Self::PooledTransactions,
+impl TryFrom<sentry::MessageId> for EthMessageId {
+    type Error = anyhow::Error;
+
+    fn try_from(id: sentry::MessageId) -> Result<Self, Self::Error> {
+        Ok(match id {
+            sentry::MessageId::NewBlockHashes66 => Self::NewBlockHashes,
+            sentry::MessageId::NewBlock66 => Self::NewBlock,
+            sentry::MessageId::Transactions66 => Self::Transactions,
+            sentry::MessageId::NewPooledTransactionHashes66 => Self::NewPooledTransactionHashes,
+            sentry::MessageId::GetBlockHeaders66 => Self::GetBlockHeaders,
+            sentry::MessageId::GetBlockBodies66 => Self::GetBlockBodies,
+            sentry::MessageId::GetNodeData66 => Self::GetNodeData,
+            sentry::MessageId::GetReceipts66 => Self::GetReceipts,
+            sentry::MessageId::GetPooledTransactions66 => Self::GetPooledTransactions,
+            sentry::MessageId::BlockHeaders66 => Self::BlockHeaders,
+            sentry::MessageId::BlockBodies66 => Self::BlockBodies,
+            sentry::MessageId::NodeData66 => Self::NodeData,
+            sentry::MessageId::Receipts66 => Self::Receipts,
+            sentry::MessageId::PooledTransactions66 => Self::PooledTransactions,
+            other => bail!("Unsupported message id: {:?}", other),
+        })
+    }
+}
+
+impl From<EthProtocolVersion> for sentry::Protocol {
+    fn from(version: EthProtocolVersion) -> Self {
+        match version {
+            EthProtocolVersion::Eth65 => Self::Eth65,
+            EthProtocolVersion::Eth66 => Self::Eth66,
         }
     }
 }
