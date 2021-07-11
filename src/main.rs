@@ -20,7 +20,6 @@ use parking_lot::RwLock;
 use secp256k1::{PublicKey, SecretKey, SECP256K1};
 use std::{
     collections::{btree_map::Entry, hash_map::Entry as HashMapEntry, BTreeMap, HashMap, HashSet},
-    convert::TryFrom,
     fmt::Debug,
     str::FromStr,
     sync::{
@@ -222,7 +221,7 @@ impl CapabilityServerImpl {
                         if self
                             .data_sender
                             .send(InboundMessage {
-                                id: sentry::MessageId::try_from(inbound_id).unwrap() as i32,
+                                id: sentry::MessageId::from(inbound_id) as i32,
                                 data,
                                 peer_id: Some(peer.into()),
                             })
